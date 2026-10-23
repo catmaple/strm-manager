@@ -57,6 +57,54 @@ docker compose ps
 
 这是推荐的零构建部署方式。日常用户只需要能够访问 GHCR 拉取镜像，不需要安装 Git 或在服务器构建应用镜像。
 
+### DecoTV、Redis、Jellyfin 容器配置
+
+以下三个服务定义已经包含在下载的 `compose.yaml` 中。单独列出便于查看每个容器使用的镜像、端口和数据卷；正常部署时无需再复制或追加这段配置。
+
+```yaml
+services:
+  decotv:
+    image: ghcr.io/decohererk/decotv:latest
+    container_name: decotv
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      USERNAME: ${DECOTV_USERNAME:?Set DECOTV_USERNAME in .env}
+      PASSWORD: ${DECOTV_PASSWORD:?Set DECOTV_PASSWORD in .env}
+      NEXT_PUBLIC_STORAGE_TYPE: redis
+      REDIS_URL: redis://decotv-redis:6379
+    depends_on:
+      decotv-redis:
+        condition: service_healthy
+
+  decotv-redis:
+    image: redis:7-alpine
+    container_name: decotv-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  jellyfin:
+    image: ${JELLYFIN_IMAGE:-ghcr.io/catmaple/strm-manager-jellyfin:latest}
+    container_name: jellyfin
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+    volumes:
+      - ./data/jellyfin/config:/config
+      - ./data/jellyfin/cache:/cache
+      - ./data/media:/media
+```
+
+DecoTV 和 Redis 使用上游发布的现成镜像，Compose 会直接拉取；不需要在本机编译源码。Jellyfin 使用本项目发布的包装镜像，该镜像基于官方 `jellyfin/jellyfin` 并预装 `/wrapper/ffmpeg`、`/wrapper/ffprobe`。GitHub Actions 会和管理应用镜像一起构建、发布 Jellyfin 包装镜像。四个服务的完整配置（包括 `strm-manager`）以仓库中的 [compose.yaml](https://github.com/catmaple/strm-manager/blob/main/compose.yaml) 为准。
+
 上面是常见 Redis/Jellyfin 镜像的容器 UID；如果你使用的镜像版本采用不同 UID，请按该镜像要求调整宿主机目录所有者。STRM 管理容器以 root 身份运行，以便沿用现有媒体目录写入权限，同时已移除 Linux capabilities。
 
 管理网页默认仅绑定在宿主机 `127.0.0.1:8080`，不会直接开放到局域网或公网。远程访问可通过 SSH 隧道：
