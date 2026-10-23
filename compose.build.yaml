@@ -1,0 +1,10 @@
+services:
+  jellyfin:
+    build:
+      context: .
+      dockerfile: jellyfin.Dockerfile
+
+  strm-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile

@@ -38,10 +38,7 @@ services:
         max-file: "3"
 
   jellyfin:
-    image: strm-jellyfin:latest
-    build:
-      context: https://github.com/catmaple/strm-manager.git#main
-      dockerfile: jellyfin.Dockerfile
+    image: ${JELLYFIN_IMAGE:-ghcr.io/catmaple/strm-manager-jellyfin:latest}
     container_name: jellyfin
     restart: unless-stopped
     ports:
@@ -57,9 +54,7 @@ services:
         max-file: "3"
 
   strm-manager:
-    build:
-      context: https://github.com/catmaple/strm-manager.git#main
-      dockerfile: Dockerfile
+    image: ${STRM_MANAGER_IMAGE:-ghcr.io/catmaple/strm-manager:latest}
     container_name: strm-manager
     restart: unless-stopped
     ports:

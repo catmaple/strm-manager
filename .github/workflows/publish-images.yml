@@ -1,0 +1,106 @@
+name: Build and publish Docker images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  MANAGER_IMAGE: ghcr.io/${{ github.repository }}
+  JELLYFIN_IMAGE: ghcr.io/${{ github.repository }}-jellyfin
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          python -m unittest discover -s tests -v
+          python -m py_compile app.py scripts/*.py
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate manager image tags
+        id: manager-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.MANAGER_IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+
+      - name: Build and publish manager image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.manager-meta.outputs.tags }}
+          labels: ${{ steps.manager-meta.outputs.labels }}
+          cache-from: type=gha,scope=manager
+          cache-to: type=gha,mode=max,scope=manager
+
+      - name: Generate Jellyfin image tags
+        id: jellyfin-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.JELLYFIN_IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+
+      - name: Build and publish Jellyfin image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: jellyfin.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.jellyfin-meta.outputs.tags }}
+          labels: ${{ steps.jellyfin-meta.outputs.labels }}
+          cache-from: type=gha,scope=jellyfin
+          cache-to: type=gha,mode=max,scope=jellyfin

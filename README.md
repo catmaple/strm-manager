@@ -6,6 +6,7 @@
 
 ```text
 compose.yaml             Compose 部署定义（下载到服务器）
+compose.build.yaml       可选的本地源码构建配置
 .env                     本地环境变量与密码（自行创建，不要提交）
 data/
   manager/config.json    脚本配置
@@ -20,33 +21,41 @@ data/
 
 `data/` 不进入镜像，可单独备份。管理容器内的脚本路径仍是 `/opt/m3u`，配置仍是 `/opt/m3u/config.json`；入口脚本把持久化目录链接到该路径，所以现有脚本状态文件布局不变。
 
-管理应用和 Jellyfin 包装镜像的构建上下文直接使用 GitHub 仓库 `https://github.com/catmaple/strm-manager.git#main`。服务器只需要保存 Compose 文件、`.env` 和持久化数据；执行构建时 Docker 会从 GitHub 获取仓库代码，不需要在服务器手动克隆源码。
-
 ## 启动
 
-在已安装 GitHub 可访问网络、Docker Engine、Docker Buildx 和 Docker Compose v2 的 Linux 主机上，创建部署目录并下载部署文件：
+### Docker（推荐：拉取发布镜像，零构建）
+
+GitHub Actions 会在代码推送到 `main` 后，自动构建并发布两个多架构镜像：
+
+- `ghcr.io/catmaple/strm-manager:latest`：Web 管理应用和现有脚本
+- `ghcr.io/catmaple/strm-manager-jellyfin:latest`：Jellyfin 加 FFmpeg/FFprobe 包装脚本
+
+首次发布后，请在 GitHub 仓库的 **Packages** 页面将这两个 Container package 设为 **Public**，这样用户才能匿名拉取镜像。
+
+在已安装 Docker Engine 和 Docker Compose v2 的 Linux 主机上，下载 Compose 文件和环境变量模板：
 
 ```sh
 mkdir -p strm-manager
 cd strm-manager
 curl -fsSLo compose.yaml https://raw.githubusercontent.com/catmaple/strm-manager/main/compose.yaml
+curl -fsSLo compose.build.yaml https://raw.githubusercontent.com/catmaple/strm-manager/main/compose.build.yaml
 curl -fsSLo .env.example https://raw.githubusercontent.com/catmaple/strm-manager/main/.env.example
 cp .env.example .env
 ```
 
-编辑 `.env`，替换所有 `CHANGE_ME` 示例值。管理员密码至少 12 位，Session Secret 至少 32 位。然后创建持久化目录并构建启动：
+编辑 `.env`，替换所有 `CHANGE_ME` 示例值。管理员密码至少 12 位，Session Secret 至少 32 位。然后创建持久化目录，拉取预构建镜像并启动：
 
 ```sh
 mkdir -p data/manager data/redis data/jellyfin/config data/jellyfin/cache \
   data/media/movies data/media/tv
 sudo chown -R 999:999 data/redis
 sudo chown -R 1000:1000 data/jellyfin/config data/jellyfin/cache
-docker compose build --pull
+docker compose pull
 docker compose up -d
 docker compose ps
 ```
 
-Docker 构建两个自定义镜像时会分别从 GitHub `main` 分支拉取同一仓库中的 `Dockerfile` 和 `jellyfin.Dockerfile` 所需文件。若 GitHub 无法访问或构建上下文下载失败，请先检查服务器到 GitHub 的网络连接。首次构建需要联网下载基础镜像及 Python 依赖。
+这是推荐的零构建部署方式。日常用户只需要能够访问 GHCR 拉取镜像，不需要安装 Git 或在服务器构建应用镜像。
 
 上面是常见 Redis/Jellyfin 镜像的容器 UID；如果你使用的镜像版本采用不同 UID，请按该镜像要求调整宿主机目录所有者。STRM 管理容器以 root 身份运行，以便沿用现有媒体目录写入权限，同时已移除 Linux capabilities。
 
@@ -59,6 +68,20 @@ ssh -L 8080:127.0.0.1:8080 user@服务器地址
 然后在本机浏览器打开 <http://127.0.0.1:8080>。使用 `.env` 中的 `STRM_ADMIN_USER` 和 `STRM_ADMIN_PASSWORD` 登录。若要从可信局域网直接访问，可将 `compose.yaml` 中管理服务端口映射左侧的 `127.0.0.1` 改为服务器内网 IP；不要将管理端口直接暴露到公网。
 
 DecoTV 和 Jellyfin 的端口分别是 3000、8096。请按现有方式完成 DecoTV 初始化、配置视频源、创建脚本专用用户，以及 Jellyfin 初始化和媒体库设置。
+
+### 源码构建（可选）
+
+需要自行修改代码或在镜像发布前试用时，在 Linux 主机克隆仓库：
+
+```sh
+git clone https://github.com/catmaple/strm-manager.git
+cd strm-manager
+cp .env.example .env
+# 编辑 .env 并创建上文列出的 data 目录
+docker compose -f compose.yaml -f compose.build.yaml up -d --build
+```
+
+源码构建时使用本地工作区的 Dockerfile；构建出的镜像仍使用 Compose 中配置的镜像名。
 
 ## 配置网页
 
@@ -112,17 +135,24 @@ Compose 会基于 `jellyfin/jellyfin:latest` 构建一个很薄的自定义镜�
 
 ## 更新与备份
 
-发布新的 GitHub 代码后，在服务器部署目录更新 Compose 和环境变量模板，并重新构建镜像：
+GitHub Actions 在 `main` 构建成功后会更新 `latest` 镜像。在服务器部署目录更新 Compose 文件并拉取新镜像：
 
 ```sh
 curl -fsSLo compose.yaml https://raw.githubusercontent.com/catmaple/strm-manager/main/compose.yaml
-docker compose build --pull --no-cache
+docker compose pull
 docker compose up -d
 ```
 
-`--no-cache` 可避免复用之前构建的 GitHub 源码层。升级前备份 `data/` 和 `.env`。`.env` 包含登录凭据，不能公开分享。恢复时停止 Compose，将数据恢复到原目录后再启动。
+升级前备份 `data/` 和 `.env`。`.env` 包含登录凭据，不能公开分享。恢复时停止 Compose，将数据恢复到原目录后再启动。
 
-Compose 默认跟随 GitHub `main` 分支。若要固定到一个稳定版本，可将 `compose.yaml` 中两个 `context` 的 `#main` 改为对应的 Git tag 或 commit。注意更新部署文件时也应下载同一个版本的 `compose.yaml`，确保部署配置与镜像源码一致。
+要固定到某个版本，可在 `.env` 中设置对应镜像 tag，例如：
+
+```dotenv
+STRM_MANAGER_IMAGE=ghcr.io/catmaple/strm-manager:v1.0.0
+JELLYFIN_IMAGE=ghcr.io/catmaple/strm-manager-jellyfin:v1.0.0
+```
+
+推送 `v*` Git tag 时，GitHub Actions 也会发布同名版本镜像。
 
 ## 已知范围
 
