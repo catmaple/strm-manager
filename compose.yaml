@@ -46,7 +46,8 @@ services:
     volumes:
       - ./data/jellyfin/config:/config
       - ./data/jellyfin/cache:/cache
-      - ./data/media:/media
+      - /media/movies:/media/movies
+      - /media/shows:/media/tv
     logging:
       driver: json-file
       options:
@@ -67,7 +68,8 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - ./data/manager:/data
-      - ./data/media:/media
+      - /media/movies:/media/movies
+      - /media/shows:/media/tv
     depends_on:
       - decotv
       - jellyfin

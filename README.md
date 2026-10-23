@@ -9,7 +9,7 @@
 | Jellyfin | 媒体库及客户端播放服务 | `http://服务器IP:8096` |
 | STRM Manager | 配置网页、脚本和定时任务 | 默认监听 `0.0.0.0:8080`，可通过服务器 IP 访问 |
 
-运行数据保存在部署目录的 `data/` 中，不打包进镜像。更新容器镜像不会删除配置、Redis 数据、Jellyfin 数据和 STRM 媒体文件。
+配置、Redis 数据和 Jellyfin 数据保存在部署目录的 `data/` 中，不打包进镜像。STRM 媒体文件保存在宿主机的 `/media/movies` 和 `/media/shows`，与应用数据分开存放；更新容器镜像不会删除这些数据。
 
 ## 1. 准备 Linux 主机
 
@@ -90,15 +90,15 @@ mkdir -p \
   data/redis \
   data/jellyfin/config \
   data/jellyfin/cache \
-  data/media/movies \
-  data/media/tv
+  /media/movies \
+  /media/shows
 
 # 常见 Redis 和 Jellyfin 镜像的运行 UID
 chown -R 999:999 data/redis
 chown -R 1000:1000 data/jellyfin/config data/jellyfin/cache
 ```
 
-如果所用镜像版本的运行 UID 不同，请按镜像文档调整对应目录所有者。`data/media` 必须允许 STRM Manager 写入，并允许 Jellyfin 读取。当前管理容器以 root 身份运行，同时移除了 Linux capabilities，以兼容既有 STRM 写入目录权限。
+如果所用镜像版本的运行 UID 不同，请按镜像文档调整对应目录所有者。`/media/movies` 和 `/media/shows` 必须允许 STRM Manager 写入，并允许 Jellyfin 读取。当前管理容器以 root 身份运行，同时移除了 Linux capabilities，以兼容既有 STRM 写入目录权限。
 
 目录用途：
 
@@ -114,9 +114,10 @@ data/
   jellyfin/
     config/           Jellyfin 用户、媒体库及元数据
     cache/            Jellyfin 缓存
-  media/
-    movies/           电影 STRM
-    tv/               剧集 STRM
+
+/media/
+  movies/             电影 STRM（宿主机目录）
+  shows/              剧集 STRM（宿主机目录）
 ```
 
 ## 4. 拉取镜像并启动四个容器
@@ -183,7 +184,8 @@ services:
     volumes:
       - ./data/jellyfin/config:/config
       - ./data/jellyfin/cache:/cache
-      - ./data/media:/media
+      - /media/movies:/media/movies
+      - /media/shows:/media/tv
 ```
 
 ## 5. 查看服务状态和启动日志
@@ -232,7 +234,7 @@ docker exec jellyfin ls -l /wrapper/ffmpeg /wrapper/ffprobe
 
 1. 创建 Jellyfin 管理员用户。
 2. 创建“电影”库，目录设为 `/media/movies`。
-3. 创建“节目/Shows”库，目录设为 `/media/tv`。
+3. 创建“节目/Shows”库，目录设为 `/media/tv`。该容器内路径映射到宿主机的 `/media/shows`。
 4. 可关闭章节图片提取和 Trickplay/预览图生成，避免 Jellyfin 对远程 STRM 流进行大量探测。
 5. 在 Dashboard → Advanced → API Keys 创建 API Key，稍后填入管理网页的 `jellyfin.api_key`。
 6. 在 Dashboard → Playback → Transcoding 中，将 FFmpeg path 设置为 `/wrapper/ffmpeg` 并保存。
@@ -313,6 +315,8 @@ docker compose exec strm-manager python /opt/m3u/crawl.py --types
 
 `crawl.py --types` 应列出已配置源的分类。没有配置 `crawl.sources` 或源接口无法访问时，先回管理网页修正配置，不要开始大批量抓取。
 
+容器内脚本继续使用 `/media/movies` 和 `/media/tv`；Compose 分别将这两个路径映射到宿主机 `/media/movies` 和 `/media/shows`。生成的 STRM 因此会出现在宿主机的 `/media/movies`、`/media/shows`，而 Jellyfin 媒体库路径仍填写容器内路径。
+
 ## 8. 验证 STRM 入库与播放
 
 先小批量测试，避免首次就触发大量远程探测：
@@ -330,7 +334,7 @@ docker compose exec strm-manager python /opt/m3u/crawl.py --new 5 --pages 5 --ty
 检查 STRM 文件：
 
 ```bash
-find data/media -name '*.strm' -type f | head
+find /media/movies /media/shows -name '*.strm' -type f | head
 ```
 
 然后在 Jellyfin 管理页扫描媒体库，确认条目出现，并分别用 Jellyfin 网页端和目标客户端（VidHub、Infuse、SenPlayer）实际测试播放。必要时可执行：
@@ -371,10 +375,33 @@ tail -n 100 data/manager/logs/recheck.log
 | DecoTV Redis 数据目录 | `data/redis/` |
 | Jellyfin `config/` | `data/jellyfin/config/` |
 | Jellyfin `cache/` | `data/jellyfin/cache/` |
-| `/media/movies/` 中的内容 | `data/media/movies/` |
-| `/media/tv/` 中的内容 | `data/media/tv/` |
+| 电影 STRM 文件 | `/media/movies/` |
+| 剧集 STRM 文件 | `/media/shows/` |
 
-复制完成后核对文件和目录权限，再启动新 Compose。迁移的 `config.json` 中，DecoTV 和 Jellyfin 地址需使用 `http://decotv:3000` 与 `http://jellyfin:8096`。迁移期间不要删除旧部署或备份；确认新环境完成抓取、扫描和客户端播放后，再下线旧服务。
+如果当前 STRM 文件还在部署目录的 `data/media/` 下，先停止抓取任务并把已有文件复制到新位置。旧剧集目录可能叫 `tv` 或 `shows`，按实际存在的目录复制：
+
+```bash
+mkdir -p /media/movies /media/shows
+[ ! -d /opt/strm-manager/data/media/movies ] || \
+  cp -a /opt/strm-manager/data/media/movies/. /media/movies/
+if [ -d /opt/strm-manager/data/media/tv ]; then
+  cp -a /opt/strm-manager/data/media/tv/. /media/shows/
+elif [ -d /opt/strm-manager/data/media/shows ]; then
+  cp -a /opt/strm-manager/data/media/shows/. /media/shows/
+fi
+```
+
+复制后更新 Compose 文件并重建两个使用媒体目录的容器：
+
+```bash
+cd /opt/strm-manager
+curl -fsSLo compose.yaml \
+  https://raw.githubusercontent.com/catmaple/strm-manager/main/compose.yaml
+docker compose config -q
+docker compose up -d --force-recreate jellyfin strm-manager
+```
+
+确认文件已复制且目录权限正确后，再检查 `/media/movies`、`/media/shows` 中的 STRM 文件，并在 Jellyfin 中扫描媒体库。迁移的 `config.json` 中，DecoTV 和 Jellyfin 地址需使用 `http://decotv:3000` 与 `http://jellyfin:8096`。迁移期间不要删除旧目录或备份；确认新环境完成抓取、扫描和客户端播放后，再清理旧数据。
 
 ## 11. 更新、版本固定与源码构建
 
@@ -415,7 +442,7 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 | 管理页面打不开 | `docker compose ps`、`docker compose logs --tail 100 strm-manager`；确认 `.env` 管理密码不少于 12 位、Session Secret 不少于 32 位 |
 | DecoTV 一直显示本地存储或日志 Redis 连接失败 | `docker compose logs --tail 100 decotv decotv-redis`；手册中使用的 `REDIS_URL` 需按当前 DecoTV 版本确认 |
 | 源分类查询失败 | 检查 `config.json` 的 CMS 地址、`crawl.sources` 和 `via_decotv`；确认 DecoTV 登录 API 路径和请求字段适用于当前版本 |
-| STRM 已生成但 Jellyfin 无内容 | 检查 Jellyfin 媒体库是否映射到 `/media/movies`、`/media/tv`，再触发库扫描 |
+| STRM 已生成但 Jellyfin 无内容 | 检查宿主机 `/media/movies`、`/media/shows` 是否有文件；Jellyfin 容器内媒体库路径应为 `/media/movies`、`/media/tv`，再触发库扫描 |
 | HLS 剧集无法播放 | 确认 Jellyfin FFmpeg path 是 `/wrapper/ffmpeg`，并用真实 m3u8 地址测试 `/wrapper/ffprobe` |
 | GHCR 拉取失败 | 检查镜像是否已由 GitHub Actions 发布，以及 GitHub Packages 是否设为 Public；私有包需要先 `docker login ghcr.io` |
 | `redis:7-alpine` 报 `dial tcp [IPv6地址]:443: connect: network is unreachable` | Docker Hub 解析到了 IPv6 地址，但服务器没有可用 IPv6 出口；按下方步骤检查 IPv4/IPv6 网络，并为 Docker daemon 配置网络代理或可用的 registry mirror |
