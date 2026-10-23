@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>STRM 管理控制台</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='i18n.js') }}" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -12,10 +13,19 @@
       <h1>STRM 管理控制台</h1>
       <p>管理现有脚本使用的 config.json</p>
     </div>
-    <form method="post" action="{{ url_for('logout') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="secondary" type="submit">退出登录</button>
-    </form>
+    <div class="topbar-controls">
+      <label class="language-control">
+        <span>语言</span>
+        <select data-language-selector aria-label="语言">
+          <option value="zh">简体中文</option>
+          <option value="en">English</option>
+        </select>
+      </label>
+      <form method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="secondary" type="submit">退出登录</button>
+      </form>
+    </div>
   </header>
   <main class="layout">
     {% for category, message in get_flashed_messages(with_categories=true) %}
@@ -311,8 +321,8 @@
           <button class="secondary" type="submit" name="action" value="dry_run">Dry Run</button>
           <button class="secondary" type="submit" name="action" value="run_job_auto">扫描DecoTV默认分类</button>
           <button class="secondary" type="submit" name="action" value="run_job_crawl">扫描视频源分类</button>
-          <button class="secondary" type="submit" name="action" value="run_job_recheck">立即复测</button>
-          <button class="secondary" type="submit" name="action" value="run_job_stats">立即统计</button>
+          <button class="secondary" type="submit" name="action" value="run_job_recheck">线路复测</button>
+          <button class="secondary" type="submit" name="action" value="run_job_stats">统计数量</button>
           <span class="muted">保存前自动备份最近 10 份；测试连接、Dry Run 和立即执行都不会覆盖现有配置。</span>
         </div>
       </form>
@@ -382,7 +392,7 @@
           const remove = document.createElement("button");
           remove.type = "button";
           remove.textContent = "×";
-          remove.setAttribute("aria-label", "移除 " + value);
+          remove.setAttribute("aria-label", window.strmTranslate("移除") + " " + value);
           remove.addEventListener("click", function () {
             writeCmsApis(parseCmsApis().filter((item) => item !== value));
             triggerPreview();
@@ -394,17 +404,18 @@
 
       function updatePreview(message, sources) {
         if (!previewBox) return;
+        message = window.strmTranslate(message);
         if (!message && (!sources || !sources.length)) {
-          previewBox.textContent = "等待生成预览…";
+          previewBox.textContent = window.strmTranslate("等待生成预览…");
           return;
         }
         const lines = [];
         if (message) lines.push(message);
         if (sources && sources.length) {
-          lines.push("源分类：");
+          lines.push(window.strmTranslate("源分类："));
           sources.forEach((source) => {
-            const types = source.types ? Object.entries(source.types).map(([id, kind]) => `${id}:${kind}`).join(", ") : "无";
-            lines.push(`- ${source.name || source.api || "未知"}: ${types}`);
+            const types = source.types ? Object.entries(source.types).map(([id, kind]) => `${id}:${window.strmTranslate(kind)}`).join(", ") : window.strmTranslate("无");
+            lines.push(`- ${source.name || source.api || window.strmTranslate("未知")}: ${types}`);
           });
         }
         previewBox.textContent = lines.join("\n");
@@ -418,7 +429,7 @@
           updatePreview("未配置 CMS API，预览为空。", []);
           return;
         }
-        previewBox.textContent = "正在生成预览…";
+        previewBox.textContent = window.strmTranslate("正在生成预览…");
         const form = new URLSearchParams();
         form.append("csrf_token", csrfToken);
         form.append("cms_apis", JSON.stringify(values));
@@ -470,6 +481,10 @@
           textarea.value = "[]";
           renderCmsApiTags();
           triggerPreview();
+          window.addEventListener("strm-language-change", function () {
+            renderCmsApiTags();
+            triggerPreview();
+          });
         });
       }
 

@@ -19,6 +19,31 @@ body { margin: 0; }
 h1, h2, p { margin-top: 0; }
 .topbar h1 { margin-bottom: 4px; font-size: 22px; }
 .topbar p { margin-bottom: 0; color: #c9d5e2; }
+.topbar-controls { display: flex; align-items: center; gap: 12px; }
+.topbar-controls form { margin: 0; }
+.language-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: inherit;
+  font-size: 14px;
+}
+.language-control select {
+  width: auto;
+  min-width: 122px;
+  padding: 8px 10px;
+  border: 1px solid #aebdca;
+  border-radius: 7px;
+  color: #182230;
+  background: #fbfcfe;
+  font: inherit;
+}
+.login-language-control {
+  justify-content: flex-end;
+  margin-bottom: 20px;
+  color: #17212b;
+}
 .layout { max-width: 1120px; margin: 24px auto; padding: 0 20px 32px; }
 .card, .login-card {
   margin-bottom: 20px;
@@ -206,6 +231,7 @@ footer { padding: 6px 0 20px; color: #667085; font-size: 13px; }
 .login-card button { width: 100%; margin-top: 20px; }
 @media (max-width: 600px) {
   .topbar { padding: 16px 18px; }
+  .topbar-controls { align-items: flex-end; flex-direction: column; gap: 8px; }
   .layout { margin-top: 16px; padding: 0 12px 24px; }
   .card { padding: 16px; }
   .section-heading { display: block; }

@@ -93,8 +93,13 @@ class ConfigWebTests(unittest.TestCase):
         self.assertIn('id="config-view"', body)
         self.assertIn("unknown_option", body)
         self.assertIn("查看完整 config.json", body)
+        self.assertIn('data-language-selector', body)
+        self.assertIn("简体中文", body)
+        self.assertIn("English", body)
         self.assertIn("扫描DecoTV默认分类", body)
         self.assertIn("扫描视频源分类", body)
+        self.assertIn("线路复测", body)
+        self.assertIn("统计数量", body)
         self.assertEqual(manager.hide_secrets(self.initial)["cookie"], manager.SECRET_MASK)
         self.assertIn("选择视频源或添加", body)
         self.assertIn('id="cms_apis" name="cms_apis" type="hidden"', body)
@@ -112,6 +117,15 @@ class ConfigWebTests(unittest.TestCase):
         self.assertNotIn('id="list_urls"', body)
         self.assertNotIn("自动生成 crawl.sources", body)
         self.assertNotIn("crawl.sources（JSON 数组）", body)
+
+    def test_language_selector_is_available_on_login_page(self):
+        response = self.client.get("/login")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('data-language-selector', response.get_data(as_text=True))
+        translations = self.client.get("/static/i18n.js")
+        self.assertEqual(translations.status_code, 200)
+        self.assertIn("STRM Manager Console", translations.get_data(as_text=True))
+        translations.close()
 
     def test_skip_remark_checkboxes_save_config_values(self):
         self.authenticate()
