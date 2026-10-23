@@ -159,10 +159,12 @@ def process_item(st, kind, v):
     if not base:
         st["seen"][vid] = -1
         return "skipped", fresh
+    item_kind = seasons.infer_item_kind(kind, raw, v)
     year = (v.get("vod_year") or "").strip()
     year = year if year.isdigit() else ""
     r = {"name": base, "full": seasons.clean(raw), "season": season,
-         "explicit": explicit or kind == "tv", "year": year, "eps": eps}
+         "explicit": explicit or item_kind == "tv", "year": year, "eps": eps,
+         "kind": "tv" if explicit or season > 1 else item_kind}
     key = f"{base}|{year}|{season}"
     owner = st["claimed"].get(key)
     if (owner and owner != vid) or (not owner and exists_on_disk(r)):

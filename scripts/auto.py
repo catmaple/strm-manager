@@ -149,6 +149,7 @@ def search(api, title, year):
                 ln = froms[i] if i < len(froms) else f"线路{i}"
                 out.append({"name": b, "full": seasons.clean(raw), "season": sn,
                             "explicit": explicit, "year": vy if vy.isdigit() else year,
+                            "kind": seasons.infer_item_kind("movie", raw, v),
                             "eps": eps, "label": f"{host}/{ln}"})
     return out
 

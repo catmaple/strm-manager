@@ -98,6 +98,7 @@ class ConfigWebTests(unittest.TestCase):
         self.assertIn("English", body)
         self.assertIn("扫描DecoTV默认分类", body)
         self.assertIn("扫描视频源分类", body)
+        self.assertNotIn("自动整理电影分类", body)
         self.assertIn("线路复测", body)
         self.assertIn("统计数量", body)
         self.assertEqual(manager.hide_secrets(self.initial)["cookie"], manager.SECRET_MASK)
@@ -300,6 +301,42 @@ class ConfigWebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertTrue(mock_run_manual_job.called)
+
+    @patch.object(manager, "write_log")
+    @patch.object(
+        manager.subprocess,
+        "run",
+        side_effect=[
+            manager.subprocess.CompletedProcess(["auto.py"], 0, "crawl ok"),
+            manager.subprocess.CompletedProcess(["reclassify_media.py"], 0, "reclassify ok"),
+        ],
+    )
+    def test_scheduled_crawl_runs_reclassification_after_success(self, mock_run, _write_log):
+        with patch.dict(manager.RUNTIME, {"job": None, "last_job": "previous"}):
+            manager.scheduled_job(
+                "默认分类抓取", "auto.py", 10, reclassify_after=True
+            )
+            self.assertEqual(mock_run.call_count, 2)
+            self.assertEqual(
+                mock_run.call_args_list[1].args[0][-1],
+                "/opt/m3u/reclassify_media.py",
+            )
+            self.assertIn("电影分类整理完成", manager.RUNTIME["last_job"])
+
+    @patch.object(manager, "write_log")
+    @patch.object(
+        manager.subprocess,
+        "run",
+        return_value=manager.subprocess.CompletedProcess(["crawl.py"], 1, "crawl failed"),
+    )
+    def test_failed_scheduled_crawl_skips_reclassification(self, mock_run, _write_log):
+        with patch.dict(manager.RUNTIME, {"job": None, "last_job": "previous"}):
+            manager.scheduled_job(
+                "指定源抓取", "crawl.py", 10, reclassify_after=True
+            )
+            mock_run.assert_called_once()
+            self.assertIn("失败", manager.RUNTIME["last_job"])
+
 
     def test_save_preserves_blank_secrets_and_unknown_fields(self):
         self.authenticate()

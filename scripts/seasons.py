@@ -71,7 +71,26 @@ def find_series_dir(base, year, season):
 
 
 def is_tv(r):
+    if r.get("kind") in {"movie", "tv"}:
+        return r["kind"] == "tv"
     return len(r["eps"]) > 1 or bool(r.get("explicit"))
+
+
+def infer_item_kind(configured_kind, title, item):
+    _, season, explicit = parse_title(title)
+    if explicit or season > 1:
+        return "tv"
+    category = str(item.get("type_name") or "").lower()
+    tv_tokens = ("电视剧", "连续剧", "剧集", "番剧", "动漫", "综艺", "纪录片", "series", "anime")
+    movie_tokens = (
+        "电影", "影片", "动作片", "喜剧片", "爱情片", "科幻片", "恐怖片",
+        "战争片", "犯罪片", "剧情片", "悬疑片", "movie", "film",
+    )
+    if any(token in category for token in tv_tokens):
+        return "tv"
+    if any(token in category for token in movie_tokens):
+        return "movie"
+    return configured_kind
 
 
 def write_strm(r):

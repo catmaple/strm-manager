@@ -824,7 +824,7 @@ def write_log(name, message):
         log_file.write(line)
 
 
-def scheduled_job(name, script, timeout):
+def scheduled_job(name, script, timeout, reclassify_after=False):
     if not JOB_LOCK.acquire(blocking=False):
         write_log("scheduler", f"{name} 跳过：另一个定时任务仍在运行")
         return
@@ -847,8 +847,39 @@ def scheduled_job(name, script, timeout):
             write_log(name, line)
         outcome = "完成" if result.returncode == 0 else f"失败（退出码 {result.returncode}）"
         write_log("scheduler", f"{name}{outcome}")
+        reclassify_outcome = ""
+        if result.returncode == 0 and reclassify_after and script in {"auto.py", "crawl.py"}:
+            with STATE_LOCK:
+                RUNTIME["job"] = "电影分类整理"
+            write_log("scheduler", "抓取完成，开始自动整理电影分类")
+            try:
+                organize_result = subprocess.run(
+                    [sys.executable, "/opt/m3u/reclassify_media.py"],
+                    cwd="/opt/m3u",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=2 * 60 * 60,
+                    check=False,
+                )
+                for line in (organize_result.stdout or "").splitlines():
+                    write_log("电影分类整理", line)
+                reclassify_outcome = (
+                    "；电影分类整理完成"
+                    if organize_result.returncode == 0
+                    else f"；电影分类整理失败（退出码 {organize_result.returncode}）"
+                )
+                write_log("scheduler", f"电影分类整理{reclassify_outcome[1:]}")
+            except subprocess.TimeoutExpired:
+                reclassify_outcome = "；电影分类整理超时"
+                write_log("scheduler", "电影分类整理超时（7200 秒）")
+            except OSError as error:
+                reclassify_outcome = "；电影分类整理启动失败"
+                write_log("scheduler", f"电影分类整理启动失败：{error}")
         with STATE_LOCK:
-            RUNTIME["last_job"] = f"{name}{outcome}，{datetime.now():%Y-%m-%d %H:%M:%S}"
+            RUNTIME["last_job"] = (
+                f"{name}{outcome}{reclassify_outcome}，{datetime.now():%Y-%m-%d %H:%M:%S}"
+            )
     except subprocess.TimeoutExpired:
         write_log("scheduler", f"{name} 超时终止（{timeout} 秒）")
         with STATE_LOCK:
@@ -928,7 +959,11 @@ def scheduler_loop():
                 if key in started:
                     continue
                 started[key] = True
-                threading.Thread(target=scheduled_job, args=job, daemon=True).start()
+                threading.Thread(
+                    target=scheduled_job,
+                    args=(*job, job_name in {"auto", "crawl"}),
+                    daemon=True,
+                ).start()
                 break
 
 

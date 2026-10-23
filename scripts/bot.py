@@ -76,6 +76,7 @@ def candidates(title):
                 c = out.setdefault((base, sn, vy), {
                     "name": base, "full": seasons.clean(raw), "season": sn,
                     "explicit": explicit, "year": vy,
+                    "kind": seasons.infer_item_kind("movie", raw, v),
                     "lang": v.get("vod_lang") or "", "lines": []})
                 ln = froms[i] if i < len(froms) else f"线路{i}"
                 c["lines"].append({"label": f"{host}/{ln}", "eps": eps})
@@ -87,7 +88,7 @@ def candidates(title):
 
 
 def label(c):
-    tv = seasons.is_tv({"eps": c["eps"], "explicit": c["explicit"]})
+    tv = seasons.is_tv({"eps": c["eps"], "explicit": c["explicit"], "kind": c["kind"]})
     kind = f"第{c['season']}季 · {len(c['eps'])}集" if tv else "电影"
     nm = c["name"] if tv else c["full"]
     year = f" ({c['year']})" if c["year"] else ""
@@ -115,7 +116,8 @@ def do_add(chat, c):
     best = probe.pick(c["lines"], log)
     folder, _ = seasons.write_strm({
         "name": c["name"], "full": c["full"], "season": c["season"],
-        "explicit": c["explicit"], "year": c["year"], "eps": best["eps"]})
+        "explicit": c["explicit"], "year": c["year"], "kind": c["kind"],
+        "eps": best["eps"]})
     ok = refresh_jellyfin()
     tail = "已通知 Jellyfin 扫描,稍等一两分钟在 VidHub 里刷新。" if ok \
         else "未配置 Jellyfin api_key,请等它定时扫描或手动扫描。"

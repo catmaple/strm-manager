@@ -1,6 +1,14 @@
 # DecoTV + STRM 管理容器
 
-将现有 STRM Python 脚本、配置网页和定时任务封装在 `strm-manager` 容器中，并通过 Docker Compose 一次启动四个服务：
+[English](README.en.md) | 简体中文 | [MIT 许可证](LICENSE)
+
+本项目将 DecoTV、Jellyfin 与 STRM 管理工具整合为一套 Docker Compose 服务：通过 DecoTV 和配置的视频源获取播放链接，生成 STRM 文件供 Jellyfin 建库，从而支持在 Jellyfin 网页端及兼容的客户端中浏览和播放在线视频。
+
+项目只在本地保存配置、媒体信息和 `.strm` 播放链接文件，不下载或保存视频文件本身。实际播放内容由 DecoTV 或用户配置的视频源提供，播放可用性取决于相应服务和来源。
+
+**本项目不提供、托管或分发任何视频内容，也不包含视频源。** 用户需自行配置并确保其对所使用的视频源和内容具有合法访问权限。
+
+本项目将现有 STRM Python 脚本、配置网页和定时任务封装在 `strm-manager` 容器中，并通过 Docker Compose 一次启动四个服务：
 
 | 服务 | 用途 | 地址/端口 |
 |---|---|---|
@@ -9,7 +17,7 @@
 | Jellyfin | 媒体库及客户端播放服务 | `http://服务器IP:8096` |
 | STRM Manager | 配置网页、脚本和定时任务 | 默认监听 `0.0.0.0:8080`，可通过服务器 IP 访问 |
 
-配置、Redis 数据和 Jellyfin 数据保存在部署目录的 `data/` 中，不打包进镜像。STRM 媒体文件不保存在项目目录 `data/media/` 中；容器脚本仍使用容器内路径 `/media/movies` 和 `/media/tv`，并分别映射到宿主机 `/media/movies` 和 `/media/shows`。这样可避免镜像更新时丢失真实媒体目录，并与原始 STRM 目录布局兼容。
+配置、Redis 数据和 Jellyfin 数据保存在部署目录的 `data/` 中，不打包进镜像。STRM 媒体文件不保存在项目目录 `data/media/` 中；容器脚本仍使用容器内路径 `/media/movies` 和 `/media/tv`，并分别映射到宿主机 `/media/movies` 和 `/media/shows`。这样可避免镜像更新时丢失媒体文件，并与原始 STRM 目录布局兼容。
 
 ## 1. 准备 Linux 主机
 
@@ -147,52 +155,7 @@ docker compose ps
 
 DecoTV 和 Redis 使用上游发布镜像。Jellyfin 包装镜像基于官方 Jellyfin 镜像，并加入本项目需要的 FFmpeg/FFprobe 包装脚本。GitHub Actions 在代码推送到 `main` 或创建 `v*` 版本 tag 后，构建并发布 STRM Manager 和 Jellyfin 包装镜像；首次发布成功后，需要在 GitHub 仓库的 **Packages** 页面将两个包设为 **Public**，用户才可以匿名拉取。
 
-### 容器配置参考
-
-以下服务定义已经包含在下载的 [compose.yaml](https://github.com/catmaple/strm-manager/blob/main/compose.yaml) 中，正常部署无需重复添加：
-
-```yaml
-services:
-  decotv:
-    image: ghcr.io/decohererk/decotv:latest
-    container_name: decotv
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      USERNAME: ${DECOTV_USERNAME:?Set DECOTV_USERNAME in .env}
-      PASSWORD: ${DECOTV_PASSWORD:?Set DECOTV_PASSWORD in .env}
-      NEXT_PUBLIC_STORAGE_TYPE: redis
-      REDIS_URL: redis://decotv-redis:6379
-    depends_on:
-      decotv-redis:
-        condition: service_healthy
-
-  decotv-redis:
-    image: redis:7-alpine
-    container_name: decotv-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-    volumes:
-      - ./data/redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  jellyfin:
-    image: ${JELLYFIN_IMAGE:-ghcr.io/catmaple/strm-manager-jellyfin:latest}
-    container_name: jellyfin
-    restart: unless-stopped
-    ports:
-      - "8096:8096"
-    volumes:
-      - ./data/jellyfin/config:/config
-      - ./data/jellyfin/cache:/cache
-      - /media/movies:/media/movies
-      - /media/shows:/media/tv
-```
+Compose service definitions and volume mappings are maintained in [`compose.yaml`](compose.yaml). Use that file as-is for normal deployment; avoid copying only part of its service definitions into another Compose file.
 
 ## 5. 查看服务状态和启动日志
 
@@ -268,6 +231,8 @@ STRM_HOST_BIND=127.0.0.1
 
 在本机浏览器打开 <http://127.0.0.1:8080>，用 `.env` 中的 `STRM_ADMIN_USER`、`STRM_ADMIN_PASSWORD` 登录。
 
+管理控制台和登录页支持简体中文、English。页面顶部的语言选择会保存在当前浏览器中；切换语言不会更改 `config.json`。
+
 若要通过 SSH 隧道访问，只需本机端口转发：
 
 ```bash
@@ -314,7 +279,9 @@ docker compose up -d strm-manager
 }
 ```
 
-保存完整配置时应保留默认文件中其他抓取和复测参数。页面会校验 JSON 和常用字段，自动备份最近 10 份配置；密码、Cookie、Telegram Token、Jellyfin API Key 不会回显。留空表示沿用已有值，设置为 JSON `null` 可以清除密钥。
+表单支持选择/添加 CMS API、预览分类、配置定时任务、测试连接、Dry Run，以及手动运行 DecoTV 默认分类扫描、视频源扫描、线路复测和统计。点击“校验并保存”才会保存配置；测试连接、Dry Run 和立即运行操作不会保存本次表单修改。配置保存时会自动备份，最多保留最近 10 份。密码、Telegram Token 和 Jellyfin API Key 会脱敏；密钥输入框留空表示保留原值。完整 `config.json` 查看窗口也会隐藏敏感值。
+
+网页表单隐藏了部分高级字段（例如 `list_urls`）；这些字段会从当前配置保留，不会因表单保存而被删除。若需修改隐藏字段或清除已保存的密钥，请先备份，再直接编辑 `data/manager/config.json`。
 
 测试配置与源访问：
 
@@ -356,15 +323,19 @@ docker compose exec strm-manager python /opt/m3u/recheck.py --dry --force
 docker compose exec strm-manager python /opt/m3u/stats.py --no-send
 ```
 
-## 9. 自动任务和日志
+## 9. 定时任务、手动运行和日志
 
-管理容器内置原有计划，按 `.env` 中的 `TZ` 时区执行：
+可在控制台的“定时任务”区域启用/禁用总开关和单项任务、设置运行时间，并选择批量扫描使用 `auto.py`（DecoTV 默认分类）或 `crawl.py`（已配置的视频源分类）。默认计划时间按 `.env` 中的 `TZ` 时区计算：
 
-- 每日 02:00：`crawl.py` 批量抓取
+- 每日 02:00：批量扫描（默认 `auto.py`；也可在控制台选择 `crawl.py`）
 - 每日 04:30：`recheck.py` 线路复测
 - 每周日 09:00：`stats.py` 周统计
 
-任务互斥，定时任务日志保存在 `data/manager/logs/`。查看容器输出和持久化日志：
+默认计划可在网页表单中修改。配置保存后会在下一次调度时使用。页面上的“扫描DecoTV默认分类”“扫描视频源分类”“线路复测”“统计数量”按钮可分别手动启动对应任务。定时批量扫描（`auto.py` 或 `crawl.py`）成功结束后，会自动执行电影分类整理；网页不提供单独的整理按钮。整理会扫描 TV 目录中只有一季一集的候选，并通过已配置 CMS 的分类名称、片名/年份和 STRM 链接精确匹配确认电影后，自动移动到 Movies 目录。无法唯一确认、包含多集或目标文件冲突的内容会保留并记录日志，不会自动猜测或删除。
+
+电影误入 TV 目录的常见原因是 CMS 分类被标记为“剧集”，或同一电影的多个播放线路被当作多集。抓取逻辑现会优先参考 CMS 条目类型和明确的季号；若分类信息缺失或含糊，仍会使用配置中的类型作为回退。建议同时检查 `crawl.sources` 的类别映射。
+
+任务互斥，定时任务和手动任务日志保存在 `data/manager/logs/`。查看容器输出和持久化日志：
 
 ```bash
 docker compose logs -f strm-manager
@@ -501,6 +472,7 @@ docker compose up -d
 docker compose ps
 ```
 
-- 首版网页用于管理现有 `config.json`，不提供手动启动任务按钮；可使用上述 `docker compose exec` 命令或 Telegram 机器人。
+- STRM 文件只是播放链接；播放记录和继续播放进度由 Jellyfin 与客户端管理，不写入 `.strm` 文件。
+- 网页保存配置时会保留未显示的现有字段；查看完整配置时敏感值会脱敏。
 - DecoTV Redis 配置变量、登录 API 路径和请求字段应按实际部署版本验证。
 - 正式迁移前，先在测试环境验证 DecoTV 登录/代理、抓取、Jellyfin 扫描及目标客户端播放。

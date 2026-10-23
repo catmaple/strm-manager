@@ -42,7 +42,8 @@ for api in cfg["cms_apis"]:
                 continue
             c = groups.setdefault((b, sn, vy), {
                 "name": b, "full": seasons.clean(raw), "season": sn,
-                "explicit": ex, "year": vy, "lines": []})
+                "explicit": ex, "year": vy,
+                "kind": seasons.infer_item_kind("movie", raw, v), "lines": []})
             ln = froms[i] if i < len(froms) else f"线路{i}"
             c["lines"].append({"label": f"{host}/{ln}", "eps": eps})
 
