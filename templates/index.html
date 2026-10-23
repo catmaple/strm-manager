@@ -46,12 +46,7 @@
       <div class="section-heading">
         <div>
           <h2>配置表单</h2>
-          <p class="muted">填写常用参数；密码、Cookie、Token 和 API Key 会保密，留空表示保留原值。</p>
         </div>
-      </div>
-      <div class="callout">
-        Docker 网络内的地址应使用服务名，例如 <code>http://decotv:3000</code> 和 <code>http://jellyfin:8096</code>，不要使用容器内的 <code>127.0.0.1</code>。
-        复杂列表（如 <code>sources</code>、<code>skip_remarks</code>）请按 JSON 数组填写；密钥留空会保留现有值。
       </div>
       {% if last_action_result %}
       <div class="results-panel">
@@ -72,13 +67,9 @@
           </div>
           {% endif %}
           <div class="field field-wide">
-            <label for="list_urls">list_urls（JSON 数组）</label>
-            <textarea id="list_urls" name="list_urls" rows="4">{{ (config.get('list_urls') or []) | tojson }}</textarea>
-          </div>
-          <div class="field field-wide">
-            <label for="cms_api_custom">cms_apis（常用视频源 + 自定义）</label>
+            <label for="cms_api_custom">选择视频源或添加</label>
             <div class="inline-actions" style="margin-bottom: 10px;">
-              <input id="cms_api_custom" list="cms-api-presets" type="url" placeholder="输入或选择 CMS API 地址" style="flex: 1; min-width: 240px;">
+              <input id="cms_api_custom" list="cms-api-presets" type="url" placeholder="选择常用视频源，或输入自定义 API 地址" style="flex: 1; min-width: 240px;">
               <button class="secondary" type="button" id="addCmsApiButton">添加</button>
               <button class="secondary" type="button" id="clearCmsApiButton">清空</button>
             </div>
@@ -88,15 +79,8 @@
               {% endfor %}
             </datalist>
             <div id="cmsApiTags" class="tag-list" aria-live="polite"></div>
-            <textarea id="cms_apis" name="cms_apis" rows="4">{{ (config.get('cms_apis') or []) | tojson }}</textarea>
+            <input id="cms_apis" name="cms_apis" type="hidden" value="{{ (config.get('cms_apis') or []) | tojson | forceescape }}">
             <div id="cmsPreview" class="preview-box" aria-live="polite">等待生成预览…</div>
-            <div class="inline-actions">
-              <button class="secondary" type="submit" name="action" value="generate_sources">自动生成 crawl.sources</button>
-            </div>
-          </div>
-          <div class="field">
-            <label for="cookie">Cookie</label>
-            <input id="cookie" name="cookie" type="password" value="{{ '********' if config.get('cookie') else '' }}" placeholder="{{ '已配置，留空表示保留原值' if config.get('cookie') else '尚未配置' }}" autocomplete="off">
           </div>
         </div>
 
@@ -275,10 +259,7 @@
             <label for="crawl_min_year">crawl.min_year</label>
             <input id="crawl_min_year" name="crawl_min_year" type="number" value="{{ config.get('crawl', {}).get('min_year', '') }}">
           </div>
-          <div class="field field-wide">
-            <label for="crawl_sources">crawl.sources（JSON 数组）</label>
-            <textarea id="crawl_sources" name="crawl_sources" rows="6">{{ (config.get('crawl', {}).get('sources') or []) | tojson }}</textarea>
-          </div>
+          <input id="crawl_sources" name="crawl_sources" type="hidden" value="{{ (config.get('crawl', {}).get('sources') or []) | tojson | forceescape }}">
           <div class="field field-wide">
             <label for="crawl_skip_remarks">crawl.skip_remarks（JSON 数组）</label>
             <textarea id="crawl_skip_remarks" name="crawl_skip_remarks" rows="4">{{ (config.get('crawl', {}).get('skip_remarks') or []) | tojson }}</textarea>
@@ -321,13 +302,18 @@
           <button type="submit" name="action" value="save">校验并保存</button>
           <button class="secondary" type="submit" name="action" value="test_connection">测试连接</button>
           <button class="secondary" type="submit" name="action" value="dry_run">Dry Run</button>
-          <button class="secondary" type="submit" name="action" value="run_job_auto">立即执行 auto.py</button>
-          <button class="secondary" type="submit" name="action" value="run_job_crawl">立即执行 crawl.py</button>
+          <button class="secondary" type="submit" name="action" value="run_job_auto">扫描DecoTV默认分类</button>
+          <button class="secondary" type="submit" name="action" value="run_job_crawl">扫描视频源分类</button>
           <button class="secondary" type="submit" name="action" value="run_job_recheck">立即复测</button>
           <button class="secondary" type="submit" name="action" value="run_job_stats">立即统计</button>
           <span class="muted">保存前自动备份最近 10 份；测试连接、Dry Run 和立即执行都不会覆盖现有配置。</span>
         </div>
       </form>
+      <details id="config-view" class="config-view">
+        <summary>查看完整 config.json</summary>
+        <p class="muted">敏感信息以星号隐藏。</p>
+        <pre>{{ config_json_view }}</pre>
+      </details>
     </section>
 
     <section class="card">
@@ -346,8 +332,10 @@
       const clearBtn = document.getElementById("clearCmsApiButton");
       const tags = document.getElementById("cmsApiTags");
       const previewBox = document.getElementById("cmsPreview");
+      const sourcesField = document.getElementById("crawl_sources");
       const formatBtn = document.getElementById("format-json");
       const csrfToken = "{{ csrf_token() }}";
+      let previewRequest = 0;
 
       function parseCmsApis() {
         const raw = (textarea.value || "").trim();
@@ -417,6 +405,7 @@
 
       function triggerPreview() {
         if (!textarea || !previewBox) return;
+        const requestId = ++previewRequest;
         const values = parseCmsApis();
         if (!values.length) {
           updatePreview("未配置 CMS API，预览为空。", []);
@@ -434,28 +423,39 @@
         })
           .then((response) => response.json().then((data) => ({ status: response.status, data })))
           .then(({ status, data }) => {
+            if (requestId !== previewRequest) return;
             if (status >= 400) {
               updatePreview(data.error || "生成预览失败。", []);
               return;
             }
+            if (data.sources && data.sources.length && sourcesField) {
+              sourcesField.value = JSON.stringify(data.sources);
+            }
             updatePreview(data.message || "已生成预览。", data.sources || []);
           })
           .catch(() => {
+            if (requestId !== previewRequest) return;
             updatePreview("生成预览失败，请稍后再试。", []);
           });
       }
 
+      function addCmsApiFromInput() {
+        const value = (input.value || "").trim();
+        if (!value) return false;
+        writeCmsApis(parseCmsApis().concat([value]));
+        input.value = "";
+        triggerPreview();
+        return true;
+      }
+
       if (addBtn) {
         addBtn.addEventListener("click", function () {
-          const value = (input.value || "").trim();
-          if (!value) {
-            input.focus();
-            return;
-          }
-          writeCmsApis(parseCmsApis().concat([value]));
-          input.value = "";
-          triggerPreview();
+          if (!addCmsApiFromInput()) input.focus();
         });
+      }
+
+      if (input) {
+        input.addEventListener("change", addCmsApiFromInput);
       }
 
       if (clearBtn) {

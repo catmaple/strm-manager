@@ -121,7 +121,7 @@ def redact(text):
 def hide_secrets(value):
     if isinstance(value, dict):
         return {
-            key: ("" if key.lower() in SECRET_KEYS and child else hide_secrets(child))
+            key: (SECRET_MASK if key.lower() in SECRET_KEYS and child else hide_secrets(child))
             for key, child in value.items()
         }
     if isinstance(value, list):
@@ -468,8 +468,6 @@ def merge_config(base, overlay):
 
 def config_from_form(form):
     config = {
-        "list_urls": parse_form_json_list(form.get("list_urls", "")),
-        "cookie": parse_form_secret(form, "cookie"),
         "decotv": {
             "url": form.get("decotv_url", ""),
         },
@@ -499,7 +497,7 @@ def config_from_form(form):
         },
         "crawl": {
             "via_decotv": form.get("crawl_via_decotv") == "on",
-            "sources": parse_form_json_list(form.get("crawl_sources", "")),
+            "sources": parse_form_json_list(form.get("crawl_sources", "[]")),
             "max_age_years": parse_form_int(form.get("crawl_max_age_years", ""), 0, 1000),
             "min_year": parse_form_int(form.get("crawl_min_year", ""), 0, 10000),
             "skip_unknown_year": form.get("crawl_skip_unknown_year") == "on",
@@ -536,6 +534,8 @@ def config_from_form(form):
             },
         },
     }
+    if "list_urls" in form:
+        config["list_urls"] = parse_form_json_list(form.get("list_urls", ""))
     if config["recheck"]["min_headroom"] is None:
         config["recheck"].pop("min_headroom")
     if config["recheck"]["switch_gain"] is None:
@@ -791,6 +791,7 @@ def index():
         timezone=os.environ.get("TZ", "系统默认"),
         last_action_result=last_action_result,
         cms_api_presets=CMS_API_PRESETS,
+        config_json_view=json.dumps(hide_secrets(config), ensure_ascii=False, indent=2),
     )
 
 

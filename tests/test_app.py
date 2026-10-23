@@ -27,6 +27,7 @@ class ConfigWebTests(unittest.TestCase):
             "jellyfin": {"url": "http://jellyfin:8096", "api_key": "jellyfin-secret"},
             "telegram": {"token": "telegram-secret", "allowed_chat_ids": [123]},
             "cms_apis": ["https://example.invalid/api"],
+            "list_urls": ["https://example.invalid/list"],
             "unknown_option": {"keep": True},
         }
         self.config_path.write_text(
@@ -83,11 +84,29 @@ class ConfigWebTests(unittest.TestCase):
         for secret in ("cookie-secret", "login-secret", "jellyfin-secret", "telegram-secret"):
             self.assertNotIn(secret, body)
         self.assertIn("unknown_option", body)
-        for field in ("cookie", "login_password", "jellyfin_api_key", "telegram_token"):
+        for field in ("login_password", "jellyfin_api_key", "telegram_token"):
             self.assertRegex(
                 body,
                 rf'<input id="{field}"[^>]*value="{re.escape(manager.SECRET_MASK)}"',
             )
+        self.assertNotIn('id="cookie"', body)
+        self.assertIn('id="config-view"', body)
+        self.assertIn("unknown_option", body)
+        self.assertIn("查看完整 config.json", body)
+        self.assertIn("扫描DecoTV默认分类", body)
+        self.assertIn("扫描视频源分类", body)
+        self.assertEqual(manager.hide_secrets(self.initial)["cookie"], manager.SECRET_MASK)
+        self.assertIn("选择视频源或添加", body)
+        self.assertIn('id="cms_apis" name="cms_apis" type="hidden"', body)
+        self.assertIn('id="crawl_sources" name="crawl_sources" type="hidden"', body)
+        self.assertNotIn('id="list_urls"', body)
+        self.assertNotIn("自动生成 crawl.sources", body)
+        self.assertNotIn("crawl.sources（JSON 数组）", body)
+
+    def test_hidden_list_urls_are_preserved_by_form_submission(self):
+        submitted = manager.config_from_form({})
+        merged = manager.merge_config(self.initial, submitted)
+        self.assertEqual(merged["list_urls"], self.initial["list_urls"])
 
     def test_form_masks_keep_existing_secrets(self):
         parsed = manager.config_from_form({
@@ -96,7 +115,7 @@ class ConfigWebTests(unittest.TestCase):
             "jellyfin_api_key": manager.SECRET_MASK,
             "telegram_token": manager.SECRET_MASK,
         })
-        self.assertEqual(parsed["cookie"], "")
+        self.assertNotIn("cookie", parsed)
         self.assertEqual(parsed["login"]["password"], "")
         self.assertEqual(parsed["jellyfin"]["api_key"], "")
         self.assertEqual(parsed["telegram"]["token"], "")
@@ -166,6 +185,25 @@ class ConfigWebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertTrue(mock_generate.called)
+
+    @patch.object(
+        manager,
+        "discover_sources_from_cms_apis",
+        return_value=[{"name": "example.com", "api": "https://example.com", "types": {"1": "movie"}}],
+    )
+    def test_generate_sources_api_returns_sources_for_form(self, mock_generate):
+        self.authenticate()
+        response = self.client.post(
+            "/api/generate_sources",
+            data={
+                "csrf_token": "test-csrf",
+                "cms_apis": '["https://example.com/api.php/provide/vod"]',
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["count"], 1)
+        self.assertEqual(response.json["sources"][0]["types"]["1"], "movie")
+        mock_generate.assert_called_once_with(["https://example.com/api.php/provide/vod"])
 
     def test_scheduler_form_parses_schedule_settings(self):
         parsed = manager.config_from_form({
