@@ -40,7 +40,7 @@ services:
   jellyfin:
     image: strm-jellyfin:latest
     build:
-      context: .
+      context: https://github.com/catmaple/strm-manager.git#main
       dockerfile: jellyfin.Dockerfile
     container_name: jellyfin
     restart: unless-stopped
@@ -58,7 +58,7 @@ services:
 
   strm-manager:
     build:
-      context: .
+      context: https://github.com/catmaple/strm-manager.git#main
       dockerfile: Dockerfile
     container_name: strm-manager
     restart: unless-stopped
