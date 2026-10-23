@@ -4,7 +4,7 @@
 
 This project integrates DecoTV, Jellyfin, and the STRM management tools in a Docker Compose stack. It retrieves playback links through DecoTV and user-configured sources, generates STRM files for Jellyfin libraries, and enables browsing and playback through the Jellyfin web interface and compatible client apps.
 
-Only configuration, metadata, and `.strm` link files are stored locally; the project does not download or store the video files themselves. Video playback is provided by DecoTV or the sources configured by the user, and availability depends on those services and sources.
+The project stores only configuration and media metadata locally. Generated `.strm` files contain playback links from sources configured by the user and that the user is authorized to use. The project does not download or store video files; playback availability depends on those services and sources.
 
 **This project does not provide, host, or distribute video content or video sources.** Users are responsible for configuring sources and ensuring they have lawful access to the content they use.
 
@@ -239,7 +239,7 @@ The web form manages the existing `config.json` format. Use Docker service names
 }
 ```
 
-In the console, select or add CMS APIs to preview their categories. Configure scheduled jobs, test connections, run a Dry Run, or manually start a DecoTV default-category scan, source-category scan, source recheck, or statistics job.
+In the console, add user-configured CMS APIs to preview their categories. The interface does not include a preset source list. Configure scheduled jobs, test connections, run a Dry Run, or manually start a DecoTV default-category scan, source-category scan, source recheck, or statistics job.
 
 Only **Validate and Save** persists the submitted form. Test Connection, Dry Run, and manual job actions do not save pending form edits. Configuration saves keep up to 10 backups. Passwords, Telegram tokens, and Jellyfin API keys are masked; leaving a secret field blank preserves its current value. The full-config viewer also redacts secrets.
 
@@ -311,6 +311,26 @@ tail -n 100 data/manager/logs/recheck.log
 ```
 
 To use the Telegram bot, configure `telegram.token` and at least one authorized ID in `telegram.allowed_chat_ids`. Enter multiple chat IDs as comma-separated numbers in the form. The bot only responds to authorized IDs and restarts automatically when its token or allowed-ID list changes.
+
+### Telegram statistics and title search
+
+1. Create a Telegram bot and copy its Bot Token into `telegram.token` in the web console.
+2. Find your numeric Telegram Chat ID and enter it in `telegram.allowed_chat_ids`. Separate multiple IDs with commas. After saving, confirm the console reports that the Telegram bot is running.
+3. Open a private chat with the bot and send `/start` or `/help` to see the available commands.
+
+| Command or action | What it does |
+|---|---|
+| `/stats` or `/status` | Replies with movie/TV counts, crawl progress, source health, disk space, and DecoTV/Jellyfin status. It only reports the current state; it does not update the weekly statistics snapshot. |
+| Type and send a title directly (no `/` command needed), for example `Example Movie` | Searches configured CMS APIs and returns buttons for available matches. Selecting one tests the routes, chooses a source, creates STRM files, and asks Jellyfin to scan the library. |
+| `/add TITLE` | Searches for a title and adds it directly only when there is a unique match; otherwise, it presents choices. |
+| `/scan` | Requests a Jellyfin library scan. |
+| `/crawl` | Runs one source-category crawl, capped at 30 new items. |
+| `/auto` | Runs one DecoTV chart/list crawl. |
+| `/recheck` | Runs a source recheck. |
+
+Search and add require configured `cms_apis` that are reachable and return usable playback links. If no Jellyfin API key is configured, wait for Jellyfin's scheduled scan or trigger a library scan manually. Only search for and add content you are authorized to access.
+
+To obtain your Chat ID, send a message to the bot and read `message.chat.id` from the Telegram Bot API `getUpdates` response. Treat the Bot Token like a password. Never share API URLs containing the token, terminal output, or screenshots that expose it.
 
 ## Migrate an existing installation
 

@@ -102,7 +102,11 @@ class ConfigWebTests(unittest.TestCase):
         self.assertIn("线路复测", body)
         self.assertIn("统计数量", body)
         self.assertEqual(manager.hide_secrets(self.initial)["cookie"], manager.SECRET_MASK)
-        self.assertIn("选择视频源或添加", body)
+        self.assertIn("添加视频源", body)
+        self.assertIn('id="addCmsApiButton">确认</button>', body)
+        self.assertIn("输入您有权使用的 CMS API 地址", body)
+        self.assertNotIn("cms-api-presets", body)
+        self.assertNotIn("datalist", body)
         self.assertIn('id="cms_apis" name="cms_apis" type="hidden"', body)
         self.assertIn('id="crawl_sources" name="crawl_sources" type="hidden"', body)
         self.assertIn("忽略以下类型", body)
@@ -223,10 +227,6 @@ class ConfigWebTests(unittest.TestCase):
         sources = manager.discover_sources_from_cms_apis(["https://hhzyapi.com/api.php/provide/vod"])
         self.assertEqual(sources[0]["types"]["1"], "movie")
         self.assertEqual(sources[0]["types"]["2"], "tv")
-
-    def test_cms_api_presets_include_common_providers(self):
-        self.assertIn("https://hhzyapi.com/api.php/provide/vod", manager.CMS_API_PRESETS)
-        self.assertIn("https://api.xinlangapi.com/xinlangapi.php/provide/vod/", manager.CMS_API_PRESETS)
 
     @patch.object(manager, "discover_sources_from_cms_apis", return_value=[{"name": "example.com", "api": "https://example.com", "types": {"1": "movie"}}])
     def test_generate_sources_action(self, mock_generate):

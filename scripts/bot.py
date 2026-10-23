@@ -184,7 +184,7 @@ def handle(u):
         return
 
     if text in ("/start", "/help"):
-        say(chat, "发送片名:搜索并选择\n/add 片名:同名唯一时直接加入\n"
+        say(chat, "直接发送片名:搜索并选择\n/add 片名:同名唯一时直接加入\n"
                   "/crawl:批量抓取一次\n/auto:榜单抓取\n/recheck:复测线路\n/stats 或 /status:查看统计\n/scan:通知 Jellyfin 扫描")
     elif text.startswith("/add"):
         title = text[4:].strip()

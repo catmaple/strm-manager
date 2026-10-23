@@ -4,7 +4,7 @@
 
 本项目将 DecoTV、Jellyfin 与 STRM 管理工具整合为一套 Docker Compose 服务：通过 DecoTV 和配置的视频源获取播放链接，生成 STRM 文件供 Jellyfin 建库，从而支持在 Jellyfin 网页端及兼容的客户端中浏览和播放在线视频。
 
-项目只在本地保存配置、媒体信息和 `.strm` 播放链接文件，不下载或保存视频文件本身。实际播放内容由 DecoTV 或用户配置的视频源提供，播放可用性取决于相应服务和来源。
+项目只在本地保存配置和媒体信息；生成的 `.strm` 文件仅包含用户自行配置、且有权使用的视频源播放链接。项目不下载或保存视频文件本身，播放可用性取决于相应服务和来源。
 
 **本项目不提供、托管或分发任何视频内容，也不包含视频源。** 用户需自行配置并确保其对所使用的视频源和内容具有合法访问权限。
 
@@ -279,7 +279,7 @@ docker compose up -d strm-manager
 }
 ```
 
-表单支持选择/添加 CMS API、预览分类、配置定时任务、测试连接、Dry Run，以及手动运行 DecoTV 默认分类扫描、视频源扫描、线路复测和统计。点击“校验并保存”才会保存配置；测试连接、Dry Run 和立即运行操作不会保存本次表单修改。配置保存时会自动备份，最多保留最近 10 份。密码、Telegram Token 和 Jellyfin API Key 会脱敏；密钥输入框留空表示保留原值。完整 `config.json` 查看窗口也会隐藏敏感值。
+表单支持添加用户自行配置的 CMS API、预览分类、配置定时任务、测试连接、Dry Run，以及手动运行 DecoTV 默认分类扫描、视频源扫描、线路复测和统计。界面不提供预置视频源列表。点击“校验并保存”才会保存配置；测试连接、Dry Run 和立即运行操作不会保存本次表单修改。配置保存时会自动备份，最多保留最近 10 份。密码、Telegram Token 和 Jellyfin API Key 会脱敏；密钥输入框留空表示保留原值。完整 `config.json` 查看窗口也会隐藏敏感值。
 
 网页表单隐藏了部分高级字段（例如 `list_urls`）；这些字段会从当前配置保留，不会因表单保存而被删除。若需修改隐藏字段或清除已保存的密钥，请先备份，再直接编辑 `data/manager/config.json`。
 
@@ -345,6 +345,28 @@ tail -n 100 data/manager/logs/recheck.log
 ```
 
 如需使用 Telegram 机器人，在网页配置 `telegram.token` 和非空的 `telegram.allowed_chat_ids`。机器人只响应授权的 Chat ID；更改 Token 或授权列表后，管理容器会自动重启机器人进程。
+
+### Telegram 查看统计与搜索添加影片
+
+1. 在 Telegram 中创建机器人并取得 Bot Token，将 Token 填入网页的 `telegram.token`。
+2. 获取自己的数字 Chat ID，在 `telegram.allowed_chat_ids` 中填写；多个 ID 用逗号分隔。保存后，确认控制台服务状态显示 Telegram 机器人正在运行。
+3. 打开与机器人的私聊，发送 `/start` 或 `/help` 查看命令。
+
+常用操作：
+
+| 操作 | 说明 |
+|---|---|
+| `/stats` 或 `/status` | 查看媒体库电影/剧集数量、抓取进度、线路状态、磁盘空间及 DecoTV/Jellyfin 服务状态；此命令只查询并回复，不更新每周统计快照 |
+| 直接输入并发送片名（无需 `/` 命令），例如 `示例电影` | 搜索已配置的 CMS API，并返回可用版本按钮；点击一个版本后，机器人测速选择线路、生成 STRM 文件，并尝试通知 Jellyfin 扫描 |
+| `/add 片名` | 搜索片名；只有唯一匹配时才会直接添加，否则会显示版本供选择 |
+| `/scan` | 请求 Jellyfin 扫描媒体库 |
+| `/crawl` | 手动运行一次视频源分类抓取，最多新增 30 部 |
+| `/auto` | 手动运行一次 DecoTV 榜单抓取 |
+| `/recheck` | 手动运行线路复测 |
+
+搜索和添加要求已配置 `cms_apis`，且 CMS 可访问并返回可用播放链接。若未配置 Jellyfin API Key，生成 STRM 后需等待 Jellyfin 定时扫描，或在 Jellyfin 中手动扫描媒体库。请只搜索和添加自己有权访问的内容。
+
+获取 Chat ID 时，可先向机器人发送一条消息，再通过 Telegram Bot API 的 `getUpdates` 响应读取 `message.chat.id`。Bot Token 是密码，不要把带 Token 的 API URL、终端输出或截图分享给他人；配置完授权 ID 后不要再公开 Token。
 
 ## 10. 迁移现有部署
 

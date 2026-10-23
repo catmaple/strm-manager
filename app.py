@@ -52,32 +52,6 @@ SECRET_KEYS = {"password", "token", "cookie", "api_key"}
 SECRET_MASK = "********"
 EXPECTED_OBJECTS = {"login", "jellyfin", "telegram", "recheck", "crawl", "decotv", "scheduler"}
 EXPECTED_LISTS = {"list_urls", "cms_apis"}
-CMS_API_PRESETS = [
-    "http://hongniuzy2.com/api.php/provide/vod/from/hnm3u8",
-    "http://cj.lziapi.com/api.php/provide/vod/from/lzm3u8",
-    "http://slapibf.com/api.php/provide/vod",
-    "http://sdzyapi.com/api.php/provide/vod/from/sdm3u8",
-    "http://jyzyapi.com/provide/vod/from/jinyingm3u8",
-    "http://api.guangsuapi.com/api.php/provide/vod/from/gsm3u8",
-    "http://aosikazy.com/api.php/provide/vod",
-    "http://api.ukuapi.com/api.php/provide/vod",
-    "http://m3u8.apiyhzy.com/api.php/provide/vod",
-    "http://lovedan.net/api.php/provide/vod",
-    "https://360zy.com/api.php/provide/vod/",
-    "https://api.niuniuzy.me/api.php/provide/vod/",
-    "https://cj.yayazy.net/api.php/provide/vod/",
-    "https://hhzyapi.com/api.php/provide/vod",
-    "https://jszyapi.com/api.php/provide/vod",
-    "https://suoniapi.com/api.php/provide/vod/",
-    "https://ikunzyapi.com/api.php/provide/vod/",
-    "https://bfzyapi.com/api.php/provide/vod/",
-    "https://www.huyaapi.com/api.php/provide/vod/",
-    "https://api.wujinapi.com/api.php/provide/vod/",
-    "https://subocaiji.com/api.php/provide/vod/",
-    "https://caiji.moduapi.cc/api.php/provide/vod/",
-    "http://zuidazy.me/api.php/provide/vod/",
-    "https://api.xinlangapi.com/xinlangapi.php/provide/vod/",
-]
 CRAWL_SKIP_REMARK_OPTIONS = [
     ("TC", "TC（枪版）"),
     ("TS", "TS（枪版）"),
@@ -805,7 +779,6 @@ def index():
         task_log=tail_log(LOG_DIR / "scheduler.log"),
         timezone=os.environ.get("TZ", "系统默认"),
         last_action_result=last_action_result,
-        cms_api_presets=CMS_API_PRESETS,
         skip_remark_options=CRAWL_SKIP_REMARK_OPTIONS,
         config_json_view=json.dumps(hide_secrets(config), ensure_ascii=False, indent=2),
     )

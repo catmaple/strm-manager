@@ -77,17 +77,12 @@
           </div>
           {% endif %}
           <div class="field field-wide">
-            <label for="cms_api_custom">选择视频源或添加</label>
+            <label for="cms_api_custom">添加视频源</label>
             <div class="inline-actions" style="margin-bottom: 10px;">
-              <input id="cms_api_custom" list="cms-api-presets" type="url" placeholder="选择常用视频源，或输入自定义 API 地址" style="flex: 1; min-width: 240px;">
-              <button class="secondary" type="button" id="addCmsApiButton">添加</button>
+              <input id="cms_api_custom" type="url" placeholder="输入您有权使用的 CMS API 地址" style="flex: 1; min-width: 240px;">
+              <button class="secondary" type="button" id="addCmsApiButton">确认</button>
               <button class="secondary" type="button" id="clearCmsApiButton">清空</button>
             </div>
-            <datalist id="cms-api-presets">
-              {% for option in cms_api_presets %}
-              <option value="{{ option }}"></option>
-              {% endfor %}
-            </datalist>
             <div id="cmsApiTags" class="tag-list" aria-live="polite"></div>
             <input id="cms_apis" name="cms_apis" type="hidden" value="{{ (config.get('cms_apis') or []) | tojson | forceescape }}">
             <div id="cmsPreview" class="preview-box" aria-live="polite">等待生成预览…</div>
