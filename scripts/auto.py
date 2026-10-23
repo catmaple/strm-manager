@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+import os, re, sys, json, time, urllib.request, urllib.parse
+sys.path.insert(0, "/opt/m3u")
+import probe
+import seasons
+
+CONFIG = "/opt/m3u/config.json"
+STATE = "/opt/m3u/state.json"
+DRY = "--dry" in sys.argv
+UA = "Mozilla/5.0"
+SKIP_WORDS = ("预告", "花絮", "特辑")
+
+cfg = json.load(open(CONFIG, encoding="utf-8"))
+state = json.load(open(STATE, encoding="utf-8")) if os.path.exists(STATE) else {}
+
+
+def log(*a):
+    print(time.strftime("%F %T"), *a, flush=True)
+
+
+def http_json(url, cookie=""):
+    h = {"User-Agent": UA}
+    if cookie:
+        h["Cookie"] = cookie
+    with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=25) as r:
+        return json.load(r)
+
+
+def find_items(o):
+    if isinstance(o, list) and o and isinstance(o[0], dict) and any(k in o[0] for k in ("title", "name")):
+        return o
+    if isinstance(o, dict):
+        for v in o.values():
+            r = find_items(v)
+            if r:
+                return r
+    return []
+
+
+_COOKIE = None
+
+
+def get_cookie():
+    """每次运行登录一次拿新 Cookie;没配置 login 则使用 config 里手填的 cookie。"""
+    global _COOKIE
+    if _COOKIE is not None:
+        return _COOKIE
+    lg = cfg.get("login")
+    if not lg:
+        _COOKIE = cfg.get("cookie", "")
+        return _COOKIE
+    body = json.dumps({"username": lg.get("username", ""), "password": lg["password"]}).encode()
+    req = urllib.request.Request(
+        lg["url"], data=body, method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            parts = [c.split(";", 1)[0].strip() for c in (r.headers.get_all("Set-Cookie") or [])]
+            _COOKIE = "; ".join(parts)
+    except Exception as e:
+        log("登录失败:", e)
+        _COOKIE = cfg.get("cookie", "")
+    log("登录成功,已获取 Cookie" if _COOKIE else "警告:未获得 Cookie")
+    return _COOKIE
+
+
+def with_start(url, start):
+    p = urllib.parse.urlparse(url)
+    q = urllib.parse.parse_qsl(p.query, keep_blank_values=True)
+    found = False
+    out = []
+    for k, v in q:
+        if k == "start":
+            out.append((k, str(start)))
+            found = True
+        else:
+            out.append((k, v))
+    if not found:
+        out.append(("start", str(start)))
+    return urllib.parse.urlunparse(p._replace(query=urllib.parse.urlencode(out)))
+
+
+def get_titles():
+    seen, out = set(), []
+    max_pages = cfg.get("max_pages", 20)
+    for u in cfg["list_urls"]:
+        qs = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(u).query))
+        try:
+            limit = int(qs.get("limit", 25))
+        except ValueError:
+            limit = 25
+        total, pages = 0, 0
+        for page in range(max_pages):
+            pu = with_start(u, page * limit)
+            try:
+                data = http_json(pu, get_cookie())
+            except Exception as e:
+                log("取榜单失败:", pu, e)
+                break
+            items = find_items(data)
+            if not items:
+                break
+            pages += 1
+            total += len(items)
+            for it in items:
+                t = seasons.clean(it.get("title") or it.get("name") or "")
+                m = re.search(r"(19|20)\d{2}", str(it.get("year") or ""))
+                y = m.group(0) if m else ""
+                if t and (t, y) not in seen:
+                    seen.add((t, y))
+                    out.append((t, y))
+            time.sleep(0.5)
+            if len(items) < limit:
+                break
+        log(f"榜单 {pages} 页 / {total} 条:", u[:110])
+    return out
+
+
+def search(api, title, year):
+    base, season, _ = seasons.parse_title(title)
+    full = seasons.clean(title)
+    url = f"{api}{'&' if '?' in api else '?'}ac=detail&wd={urllib.parse.quote(base)}"
+    try:
+        data = http_json(url)
+    except Exception as e:
+        log("  搜索失败:", api, e)
+        return []
+    host = urllib.parse.urlparse(api).netloc
+    out = []
+    for v in data.get("list", []):
+        raw = v.get("vod_name", "")
+        tags = raw + (v.get("type_name") or "") + (v.get("vod_remarks") or "")
+        if any(k in tags for k in SKIP_WORDS):
+            continue
+        b, sn, explicit = seasons.parse_title(raw)
+        if not ((b == base and sn == season) or seasons.clean(raw) == full):
+            continue
+        vy = (v.get("vod_year") or "").strip()
+        if year and vy.isdigit() and abs(int(vy) - int(year)) > 1:
+            continue
+        groups = v.get("vod_play_url", "").split("$$$")
+        froms = v.get("vod_play_from", "").split("$$$")
+        for i, g in enumerate(groups):
+            if ".m3u8" not in g:
+                continue
+            eps = [e.split("$", 1) for e in g.split("#") if "$" in e]
+            eps = [(n, u.strip()) for n, u in eps if ".m3u8" in u]
+            if eps:
+                ln = froms[i] if i < len(froms) else f"线路{i}"
+                out.append({"name": b, "full": seasons.clean(raw), "season": sn,
+                            "explicit": explicit, "year": vy if vy.isdigit() else year,
+                            "eps": eps, "label": f"{host}/{ln}"})
+    return out
+
+
+def refresh_jellyfin():
+    jf = cfg.get("jellyfin", {})
+    if not jf.get("api_key"):
+        return
+    req = urllib.request.Request(
+        jf["url"].rstrip("/") + "/Library/Refresh", method="POST",
+        headers={"Authorization": f'MediaBrowser Token="{jf["api_key"]}"'})
+    try:
+        urllib.request.urlopen(req, timeout=15)
+        log("已通知 Jellyfin 扫描")
+    except Exception as e:
+        log("通知 Jellyfin 失败:", e)
+
+
+def main():
+    titles = get_titles()
+    log(f"共发现 {len(titles)} 部不重复的片")
+    if "--titles" in sys.argv:
+        return
+    if not titles:
+        log("没有取到任何片名,请检查 list_urls 和登录/cookie 配置")
+        return
+    added, now, lookups = 0, time.time(), 0
+    retry = cfg.get("retry_miss_days", 3) * 86400
+    for title, year in titles:
+        if added >= cfg.get("max_new_per_run", 30):
+            log("已达到本次新增上限")
+            break
+        key = f"{title}|{year}"
+        st = state.get(key)
+        if st and (st["s"] == "ok" or now - st["t"] < retry):
+            continue
+        if lookups >= cfg.get("max_lookups_per_run", 300):
+            log("已达到本次查找上限,剩余的留到下次")
+            break
+        lookups += 1
+        if lookups % 20 == 0 and not DRY:
+            json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
+        log("查找:", title, year)
+        cands = []
+        for api in cfg["cms_apis"]:
+            cands += search(api, title, year)
+            time.sleep(1)
+        hit = probe.pick(cands, log) if cands else None
+        if hit:
+            log("  选用线路:", hit.get("label"), "|", hit.get("_info"))
+        if not hit:
+            log("  未找到")
+            state[key] = {"s": "miss", "t": now}
+            continue
+        if DRY:
+            log(f"  [dry] 将生成: {hit['full']} ({hit['year']}) {len(hit['eps'])} 个")
+            continue
+        folder, n = seasons.write_strm(hit)
+        log(f"  已生成: {folder} ({n} 个)")
+        state[key] = {"s": "ok", "t": now}
+        added += 1
+    if not DRY:
+        json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
+        if added:
+            refresh_jellyfin()
+    log(f"完成,本次新增 {added} 部")
+
+
+main()

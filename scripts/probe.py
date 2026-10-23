@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+import re, time, urllib.request, urllib.parse
+
+UA = "Mozilla/5.0"
+TIMEOUT = 8
+SAMPLE = 2
+
+
+def _open(url):
+    return urllib.request.urlopen(
+        urllib.request.Request(url, headers={"User-Agent": UA}), timeout=TIMEOUT)
+
+
+def _get_text(url):
+    t0 = time.time()
+    with _open(url) as r:
+        ttfb = time.time() - t0
+        data = r.read(2 * 1024 * 1024)
+    return data.decode("utf-8", "ignore"), ttfb
+
+
+def _download(url, limit=16 * 1024 * 1024, deadline=12.0):
+    t0, n, complete = time.time(), 0, True
+    with _open(url) as r:
+        while True:
+            chunk = r.read(65536)
+            if not chunk:
+                break
+            n += len(chunk)
+            if n >= limit or time.time() - t0 > deadline:
+                complete = False
+                break
+    return n, time.time() - t0, complete
+
+
+def _parse_master(text, base):
+    best, best_bw = None, -1
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        if ln.startswith("#EXT-X-STREAM-INF"):
+            m = re.search(r"BANDWIDTH=(\d+)", ln)
+            bw = int(m.group(1)) if m else 0
+            for nxt in lines[i + 1:]:
+                if nxt.strip() and not nxt.startswith("#"):
+                    if bw > best_bw:
+                        best, best_bw = urllib.parse.urljoin(base, nxt.strip()), bw
+                    break
+    return best
+
+
+def _parse_media(text, base):
+    segs, dur = [], 0.0
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if ln.startswith("#EXTINF:"):
+            try:
+                dur = float(ln[8:].split(",")[0])
+            except ValueError:
+                dur = 0.0
+        elif ln and not ln.startswith("#"):
+            segs.append((dur, urllib.parse.urljoin(base, ln)))
+            dur = 0.0
+    return segs
+
+
+def score(url):
+    """返回 {ttfb, mbps, need, headroom};失败返回 None。"""
+    try:
+        text, ttfb = _get_text(url)
+        if "#EXT-X-STREAM-INF" in text:
+            sub = _parse_master(text, url)
+            if not sub:
+                return None
+            url = sub
+            text, t2 = _get_text(url)
+            ttfb += t2
+        segs = _parse_media(text, url)
+        if not segs:
+            return None
+        mid = len(segs) // 2
+        sample = segs[mid:mid + SAMPLE] or segs[-SAMPLE:]
+        tb, tt, td = 0, 0.0, 0.0
+        for dur, su in sample:
+            n, t, complete = _download(su)
+            if not complete:
+                return {"ttfb": ttfb, "mbps": n * 8 / max(t, 0.01) / 1e6,
+                        "need": 1.0, "headroom": 0.1}
+            tb, tt, td = tb + n, tt + t, td + dur
+        td = td or 6.0 * len(sample)
+        if tb == 0 or tt <= 0:
+            return None
+        mbps = tb * 8 / tt / 1e6
+        need = tb * 8 / td / 1e6
+        return {"ttfb": ttfb, "mbps": mbps, "need": need, "headroom": mbps / need}
+    except Exception:
+        return None
+
+
+def pick(cands, log=print):
+    """cands: [{'label':..., 'eps':[(名,url),...]}];返回最快的一个,并写入 _info。"""
+    if not cands:
+        return None
+    nmax = max(len(c["eps"]) for c in cands)
+    pool = [c for c in cands if len(c["eps"]) == nmax]
+    if len(pool) == 1:
+        pool[0]["_info"] = "仅一条线路,未测速"
+        return pool[0]
+    best, best_key = None, None
+    for c in pool:
+        s = score(c["eps"][0][1])
+        name = c.get("label", "?")
+        if s is None:
+            c["_info"] = "测速失败"
+            log(f"  线路 {name}: 不可用/超时")
+            continue
+        c["_info"] = f"{s['mbps']:.1f}Mbps/需{s['need']:.1f}, 首包{s['ttfb']:.2f}s"
+        log(f"  线路 {name}: {c['_info']}")
+        key = (min(s["headroom"], 8.0), -s["ttfb"])
+        if best_key is None or key > best_key:
+            best, best_key = c, key
+    if best is None:
+        pool[0]["_info"] = "全部测速失败,使用第一条"
+        return pool[0]
+    return best

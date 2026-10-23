@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STRM 管理控制台</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>STRM 管理控制台</h1>
+      <p>管理现有脚本使用的 config.json</p>
+    </div>
+    <form method="post" action="{{ url_for('logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="secondary" type="submit">退出登录</button>
+    </form>
+  </header>
+  <main class="layout">
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      <div class="notice {{ category }}">{{ message }}</div>
+    {% endfor %}
+
+    <section class="card">
+      <h2>服务状态</h2>
+      <div class="service-grid">
+        {% for name, status in services.items() %}
+          <div class="service">
+            <strong>{{ name }}</strong>
+            <span class="{{ 'ok' if status.startswith('正常') else 'bad' }}">{{ status }}</span>
+          </div>
+        {% else %}
+          <p class="bad">配置无法读取：{{ config_error }}</p>
+        {% endfor %}
+      </div>
+      <div class="runtime">
+        <span>当前定时任务：<strong>{{ runtime.job or "无" }}</strong></span>
+        <span>最近任务：{{ runtime.last_job }}</span>
+        <span>Telegram 机器人：{{ runtime.bot }}</span>
+      </div>
+      <p class="muted">计划任务：每日 02:00 批量抓取、每日 04:30 线路复测、每周日 09:00 统计（容器时区：{{ timezone }}）。</p>
+    </section>
+
+    <section class="card">
+      <div class="section-heading">
+        <div>
+          <h2>配置文件</h2>
+          <p class="muted">编辑完整 JSON；密码、Cookie、Token 和 API 密钥会隐藏，留空表示保留原值。</p>
+        </div>
+        <button class="secondary" type="button" id="format-json">格式化 JSON</button>
+      </div>
+      <div class="callout">
+        Docker 网络内的地址应使用服务名，例如 <code>http://decotv:3000</code> 和 <code>http://jellyfin:8096</code>，不要使用容器内的 <code>127.0.0.1</code>。
+        清空已有密钥请将对应 JSON 值改为 <code>null</code>。
+      </div>
+      <form method="post" action="{{ url_for('index') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="config-json">config.json</label>
+        <textarea id="config-json" name="config_json" spellcheck="false" required>{{ config_json }}</textarea>
+        <div class="actions">
+          <button type="submit">校验并保存</button>
+          <span class="muted">保存前自动备份最近 10 份；写入采用原子替换。</span>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>最近定时任务日志</h2>
+      <pre>{{ task_log }}</pre>
+      <p class="muted">详细日志持久化在 data/manager/logs/，脚本输出中的已配置密钥会脱敏。</p>
+    </section>
+
+    <footer>管理网页默认仅绑定到本机 127.0.0.1。远程管理建议使用 SSH 隧道或 VPN。</footer>
+  </main>
+  <script>
+    document.getElementById("format-json").addEventListener("click", function () {
+      const field = document.getElementById("config-json");
+      try {
+        field.value = JSON.stringify(JSON.parse(field.value), null, 2);
+      } catch (error) {
+        alert("JSON 格式无效：" + error.message);
+      }
+    });
+  </script>
+</body>
+</html>

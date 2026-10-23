@@ -1,0 +1,49 @@
+{
+  "list_urls": [],
+  "cookie": "",
+  "decotv": {
+    "url": "http://decotv:3000"
+  },
+  "login": {
+    "url": "http://decotv:3000/api/login",
+    "username": "",
+    "password": ""
+  },
+  "cms_apis": [],
+  "max_new_per_run": 30,
+  "max_pages": 20,
+  "max_lookups_per_run": 300,
+  "retry_miss_days": 3,
+  "jellyfin": {
+    "url": "http://jellyfin:8096",
+    "api_key": ""
+  },
+  "telegram": {
+    "token": "",
+    "allowed_chat_ids": []
+  },
+  "recheck": {
+    "min_headroom": 1.5,
+    "switch_gain": 1.3,
+    "interval_days": 7,
+    "max_per_run": 40
+  },
+  "crawl": {
+    "via_decotv": true,
+    "sources": [],
+    "max_age_years": 20,
+    "min_year": 0,
+    "skip_unknown_year": false,
+    "min_score": 6,
+    "score_field": "douban",
+    "skip_remarks": ["TC", "TS", "CAM", "枪版", "抢先", "预告"],
+    "max_new_per_run": 30,
+    "max_pages_per_run": 150,
+    "per_type_new": 15,
+    "per_type_pages": 10,
+    "backfill_max_pages": 25,
+    "update_pages": 15,
+    "max_eps": 60,
+    "delay": 1.0
+  }
+}

@@ -1,0 +1,97 @@
+services:
+  decotv:
+    image: ghcr.io/decohererk/decotv:latest
+    container_name: decotv
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      USERNAME: ${DECOTV_USERNAME:?Set DECOTV_USERNAME in .env}
+      PASSWORD: ${DECOTV_PASSWORD:?Set DECOTV_PASSWORD in .env}
+      NEXT_PUBLIC_STORAGE_TYPE: redis
+      REDIS_URL: redis://decotv-redis:6379
+    depends_on:
+      decotv-redis:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  decotv-redis:
+    image: redis:7-alpine
+    container_name: decotv-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  jellyfin:
+    image: strm-jellyfin:latest
+    build:
+      context: .
+      dockerfile: jellyfin.Dockerfile
+    container_name: jellyfin
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+    volumes:
+      - ./data/jellyfin/config:/config
+      - ./data/jellyfin/cache:/cache
+      - ./data/media:/media
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  strm-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: strm-manager
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${STRM_PORT:-8080}:8080"
+    environment:
+      STRM_ADMIN_USER: ${STRM_ADMIN_USER:?Set STRM_ADMIN_USER in .env}
+      STRM_ADMIN_PASSWORD: ${STRM_ADMIN_PASSWORD:?Set STRM_ADMIN_PASSWORD in .env}
+      STRM_SESSION_SECRET: ${STRM_SESSION_SECRET:?Set STRM_SESSION_SECRET in .env}
+      STRM_DATA_DIR: /data
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./data/manager:/data
+      - ./data/media:/media
+    depends_on:
+      - decotv
+      - jellyfin
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/login', timeout=2)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

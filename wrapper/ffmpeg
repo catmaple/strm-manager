@@ -1,0 +1,15 @@
+#!/bin/bash
+REAL=/usr/lib/jellyfin-ffmpeg/ffmpeg
+args=()
+inserted=0
+argv=("$@")
+for ((i=0; i<${#argv[@]}; i++)); do
+  a="${argv[i]}"
+  nxt="${argv[i+1]}"
+  if [ "$a" = "-i" ] && [ "$inserted" -eq 0 ] && [[ "$nxt" == *.m3u8* ]]; then
+    args+=(-allowed_segment_extensions ALL -extension_picky 0)
+    inserted=1
+  fi
+  args+=("$a")
+done
+exec "$REAL" "${args[@]}"
