@@ -7,7 +7,7 @@
 | DecoTV | 浏览视频源、提供源请求代理 | `http://服务器IP:3000` |
 | Redis | DecoTV 数据持久化 | 仅 Compose 内部访问 |
 | Jellyfin | 媒体库及客户端播放服务 | `http://服务器IP:8096` |
-| STRM Manager | 配置网页、脚本和定时任务 | 默认仅服务器本机 `127.0.0.1:8080` |
+| STRM Manager | 配置网页、脚本和定时任务 | 默认监听 `0.0.0.0:8080`，可通过服务器 IP 访问 |
 
 运行数据保存在部署目录的 `data/` 中，不打包进镜像。更新容器镜像不会删除配置、Redis 数据、Jellyfin 数据和 STRM 媒体文件。
 
@@ -75,6 +75,7 @@ printf 'DECOTV_PASSWORD=%s\n' "$(openssl rand -hex 16)"
 | `STRM_ADMIN_PASSWORD` | 管理网页登录密码，至少 12 个字符 |
 | `STRM_SESSION_SECRET` | 网页会话签名密钥，至少 32 个字符 |
 | `STRM_PORT` | 管理网页宿主机端口，默认 8080 |
+| `STRM_HOST_BIND` | 管理网页监听地址；默认 `0.0.0.0`，可改为 `127.0.0.1` 只允许本机访问 |
 | `TZ` | 容器时区，默认 `Asia/Shanghai` |
 | `DECOTV_USERNAME` / `DECOTV_PASSWORD` | DecoTV 管理账号 |
 | `STRM_MANAGER_IMAGE` / `JELLYFIN_IMAGE` | 镜像名，默认使用 GHCR 的 `latest` 发布镜像 |
@@ -246,24 +247,24 @@ docker exec jellyfin /wrapper/ffprobe -v error \
 
 ## 7. 打开 STRM Manager 网页并配置脚本
 
-管理网页默认绑定在宿主机 `127.0.0.1:8080`，不会直接开放到局域网或公网。可以在服务器本机访问，或从自己的电脑建立 SSH 隧道：
+管理网页默认绑定到 `0.0.0.0:${STRM_PORT:-8080}`，可直接通过服务器 IP 访问；若只想本机访问，可在 `.env` 中设置：
+
+```bash
+STRM_HOST_BIND=127.0.0.1
+```
+
+在本机浏览器打开 <http://127.0.0.1:8080>，用 `.env` 中的 `STRM_ADMIN_USER`、`STRM_ADMIN_PASSWORD` 登录。
+
+若要通过 SSH 隧道访问，只需本机端口转发：
 
 ```bash
 ssh -L 8080:127.0.0.1:8080 用户名@服务器IP
 ```
 
-保持 SSH 会话连接，在本机浏览器打开 <http://127.0.0.1:8080>，用 `.env` 中的 `STRM_ADMIN_USER`、`STRM_ADMIN_PASSWORD` 登录。
+如需显式指定只监听某个网卡地址，也可以在 `.env` 中写成：
 
-如需允许可信局域网直接访问，编辑 `compose.yaml`，将管理服务端口映射：
-
-```yaml
-- "127.0.0.1:${STRM_PORT:-8080}:8080"
-```
-
-改为服务器内网地址，例如：
-
-```yaml
-- "192.168.1.110:${STRM_PORT:-8080}:8080"
+```bash
+STRM_HOST_BIND=192.168.1.110
 ```
 
 然后应用配置：
@@ -417,6 +418,50 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 | STRM 已生成但 Jellyfin 无内容 | 检查 Jellyfin 媒体库是否映射到 `/media/movies`、`/media/tv`，再触发库扫描 |
 | HLS 剧集无法播放 | 确认 Jellyfin FFmpeg path 是 `/wrapper/ffmpeg`，并用真实 m3u8 地址测试 `/wrapper/ffprobe` |
 | GHCR 拉取失败 | 检查镜像是否已由 GitHub Actions 发布，以及 GitHub Packages 是否设为 Public；私有包需要先 `docker login ghcr.io` |
+| `redis:7-alpine` 报 `dial tcp [IPv6地址]:443: connect: network is unreachable` | Docker Hub 解析到了 IPv6 地址，但服务器没有可用 IPv6 出口；按下方步骤检查 IPv4/IPv6 网络，并为 Docker daemon 配置网络代理或可用的 registry mirror |
+
+### Docker Hub IPv6 网络错误
+
+此错误发生在 Docker Hub 网络连接阶段，不是 Redis 配置或 Compose 文件错误。`docker compose pull` 失败时，后续 `docker compose up -d` 也无法创建完整服务；先修复镜像拉取并确认成功，再启动容器。
+
+先在宿主机上检查 IPv4、IPv6 连通性：
+
+```bash
+# IPv4 正常时通常返回 HTTP/1.1 401 Unauthorized；这是 registry 的正常匿名响应
+curl -4 -I --connect-timeout 10 https://registry-1.docker.io/v2/
+
+# 若服务器没有 IPv6 出口，这条命令会失败；同时检查 IPv6 路由
+curl -6 -I --connect-timeout 10 https://registry-1.docker.io/v2/
+ip -6 route
+```
+
+- **IPv4 和 IPv6 都失败：**服务器当前无法连接 Docker Hub。为 Docker daemon 配置能访问 Docker Hub 的代理，或配置你所使用网络提供商的可信 Docker Hub registry mirror。只在当前 Shell 设置 `HTTP_PROXY`/`HTTPS_PROXY` 通常不会传递给后台 Docker daemon。
+- **IPv4 成功、IPv6 失败：**优先修复服务器 IPv6 默认路由；若该网络不提供 IPv6，禁用无效的 IPv6 配置或让 Docker daemon 通过可用代理/镜像站访问 Docker Hub。不要把临时解析出的某个 CDN IP 固定写入 `/etc/hosts`。
+
+Docker daemon 使用 systemd 代理的配置示例（把地址替换为自己的代理；不要原样照抄占位地址）：
+
+```bash
+mkdir -p /etc/systemd/system/docker.service.d
+cat > /etc/systemd/system/docker.service.d/proxy.conf <<'EOF'
+[Service]
+Environment="HTTP_PROXY=http://代理地址:端口"
+Environment="HTTPS_PROXY=http://代理地址:端口"
+Environment="NO_PROXY=localhost,127.0.0.1,.local"
+EOF
+
+systemctl daemon-reload
+systemctl restart docker
+docker info | grep -i proxy
+```
+
+重启 Docker daemon 会影响当前运行的容器；请在维护窗口操作。配置好代理或 registry mirror 后重新拉取并确认四个服务镜像均成功：
+
+```bash
+cd /opt/strm-manager
+docker compose pull
+docker compose up -d
+docker compose ps
+```
 
 - 首版网页用于管理现有 `config.json`，不提供手动启动任务按钮；可使用上述 `docker compose exec` 命令或 Telegram 机器人。
 - DecoTV Redis 配置变量、登录 API 路径和请求字段应按实际部署版本验证。

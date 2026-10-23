@@ -9,13 +9,21 @@ if [ ! -f "$DATA_DIR/config.json" ]; then
 fi
 chmod 600 "$DATA_DIR/config.json"
 
-for state in crawl_state.json state.json health.json stats_snapshot.json; do
-    if [ ! -e "/opt/m3u/$state" ]; then
-        ln -s "$DATA_DIR/$state" "/opt/m3u/$state"
+link_state() {
+    src="$1"
+    target="$2"
+    if [ -L "$src" ] && [ "$(readlink "$src")" = "$target" ]; then
+        return 0
     fi
+    if [ -e "$src" ] || [ -L "$src" ]; then
+        rm -rf "$src"
+    fi
+    ln -s "$target" "$src"
+}
+
+for state in crawl_state.json state.json health.json stats_snapshot.json; do
+    link_state "/opt/m3u/$state" "$DATA_DIR/$state"
 done
-if [ ! -e /opt/m3u/config.json ]; then
-    ln -s "$DATA_DIR/config.json" /opt/m3u/config.json
-fi
+link_state /opt/m3u/config.json "$DATA_DIR/config.json"
 
 exec python /opt/strm-manager/app.py
