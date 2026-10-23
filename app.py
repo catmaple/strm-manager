@@ -78,6 +78,14 @@ CMS_API_PRESETS = [
     "http://zuidazy.me/api.php/provide/vod/",
     "https://api.xinlangapi.com/xinlangapi.php/provide/vod/",
 ]
+CRAWL_SKIP_REMARK_OPTIONS = [
+    ("TC", "TC（枪版）"),
+    ("TS", "TS（枪版）"),
+    ("CAM", "CAM（枪版）"),
+    ("枪版", "枪版"),
+    ("抢先", "抢先"),
+    ("预告", "预告"),
+]
 NUMBER_FIELDS = {
     "max_new_per_run": (0, 100000),
     "max_pages": (0, 100000),
@@ -336,14 +344,19 @@ def parse_form_chat_ids(value):
     if not cleaned:
         return []
     parsed = []
-    for part in re.split(r"[\s,]+", cleaned):
+    for part in cleaned.split(","):
+        part = part.strip()
         if not part:
             continue
-        try:
-            parsed.append(int(part))
-        except ValueError:
-            parsed.append(part)
+        if not re.fullmatch(r"-?\d+", part):
+            raise ValueError("telegram.allowed_chat_ids 请输入数字，多个数字请用逗号分隔")
+        parsed.append(int(part))
     return parsed
+
+
+def parse_form_selected_values(form, key, allowed_values):
+    values = form.getlist(key) if hasattr(form, "getlist") else [form.get(key, "")]
+    return [value for value, _label in allowed_values if value in values]
 
 
 def parse_form_secret(form, key):
@@ -503,7 +516,9 @@ def config_from_form(form):
             "skip_unknown_year": form.get("crawl_skip_unknown_year") == "on",
             "min_score": parse_form_int(form.get("crawl_min_score", ""), 0, 100),
             "score_field": form.get("crawl_score_field", "douban") or "douban",
-            "skip_remarks": parse_form_json_list(form.get("crawl_skip_remarks", "")),
+            "skip_remarks": parse_form_selected_values(
+                form, "crawl_skip_remarks", CRAWL_SKIP_REMARK_OPTIONS
+            ),
             "max_new_per_run": parse_form_int(form.get("crawl_max_new_per_run", ""), 0, 100000),
             "max_pages_per_run": parse_form_int(form.get("crawl_max_pages_per_run", ""), 0, 100000),
             "per_type_new": parse_form_int(form.get("crawl_per_type_new", ""), 0, 100000),
@@ -791,6 +806,7 @@ def index():
         timezone=os.environ.get("TZ", "系统默认"),
         last_action_result=last_action_result,
         cms_api_presets=CMS_API_PRESETS,
+        skip_remark_options=CRAWL_SKIP_REMARK_OPTIONS,
         config_json_view=json.dumps(hide_secrets(config), ensure_ascii=False, indent=2),
     )
 

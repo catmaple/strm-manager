@@ -66,6 +66,18 @@ h1, h2, p { margin-top: 0; }
   width: auto;
   margin: 0;
 }
+.checkbox-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 16px;
+}
+.checkbox-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-weight: 400;
+}
 .callout {
   margin: 8px 0 16px;
   padding: 12px 14px;

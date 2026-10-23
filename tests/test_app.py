@@ -99,9 +99,50 @@ class ConfigWebTests(unittest.TestCase):
         self.assertIn("选择视频源或添加", body)
         self.assertIn('id="cms_apis" name="cms_apis" type="hidden"', body)
         self.assertIn('id="crawl_sources" name="crawl_sources" type="hidden"', body)
+        self.assertIn("忽略以下类型", body)
+        self.assertIn("TC（枪版）", body)
+        self.assertIn("TS（枪版）", body)
+        self.assertIn("CAM（枪版）", body)
+        self.assertNotIn("crawl.skip_remarks（JSON 数组）", body)
+        self.assertNotIn('id="crawl_skip_remarks"', body)
+        self.assertRegex(
+            body,
+            r'<input id="telegram_allowed_chat_ids"[^>]*value="123"',
+        )
         self.assertNotIn('id="list_urls"', body)
         self.assertNotIn("自动生成 crawl.sources", body)
         self.assertNotIn("crawl.sources（JSON 数组）", body)
+
+    def test_skip_remark_checkboxes_save_config_values(self):
+        self.authenticate()
+        response = self.client.post(
+            "/",
+            data={
+                "csrf_token": "test-csrf",
+                "crawl_skip_remarks": ["TC", "CAM", "预告"],
+            },
+        )
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(saved["crawl"]["skip_remarks"], ["TC", "CAM", "预告"])
+
+    def test_chat_ids_use_comma_separated_numbers(self):
+        self.assertEqual(manager.parse_form_chat_ids("123, -456"), [123, -456])
+        with self.assertRaisesRegex(ValueError, "请输入数字"):
+            manager.parse_form_chat_ids("[123]")
+
+    def test_save_comma_separated_chat_ids_as_integer_list(self):
+        self.authenticate()
+        response = self.client.post(
+            "/",
+            data={
+                "csrf_token": "test-csrf",
+                "telegram_allowed_chat_ids": "123, -456",
+            },
+        )
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(saved["telegram"]["allowed_chat_ids"], [123, -456])
 
     def test_hidden_list_urls_are_preserved_by_form_submission(self):
         submitted = manager.config_from_form({})

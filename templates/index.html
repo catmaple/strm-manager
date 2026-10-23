@@ -224,8 +224,8 @@
             <input id="telegram_token" name="telegram_token" type="password" value="{{ '********' if config.get('telegram', {}).get('token') else '' }}" placeholder="{{ '已配置，留空表示保留原值' if config.get('telegram', {}).get('token') else '尚未配置' }}" autocomplete="off">
           </div>
           <div class="field field-wide">
-            <label for="telegram_allowed_chat_ids">telegram.allowed_chat_ids（逗号分隔或 JSON 数组）</label>
-            <input id="telegram_allowed_chat_ids" name="telegram_allowed_chat_ids" type="text" value="{{ (config.get('telegram', {}).get('allowed_chat_ids', []) or []) | tojson }}">
+            <label for="telegram_allowed_chat_ids">telegram.allowed_chat_ids（多个数字以逗号分隔）</label>
+            <input id="telegram_allowed_chat_ids" name="telegram_allowed_chat_ids" type="text" value="{{ (config.get('telegram', {}).get('allowed_chat_ids', []) or []) | join(', ') }}" placeholder="例如：123456789，多个数字用逗号分隔">
           </div>
         </div>
 
@@ -261,8 +261,15 @@
           </div>
           <input id="crawl_sources" name="crawl_sources" type="hidden" value="{{ (config.get('crawl', {}).get('sources') or []) | tojson | forceescape }}">
           <div class="field field-wide">
-            <label for="crawl_skip_remarks">crawl.skip_remarks（JSON 数组）</label>
-            <textarea id="crawl_skip_remarks" name="crawl_skip_remarks" rows="4">{{ (config.get('crawl', {}).get('skip_remarks') or []) | tojson }}</textarea>
+            <label>忽略以下类型</label>
+            <div class="checkbox-options">
+              {% for value, label in skip_remark_options %}
+              <label>
+                <input type="checkbox" name="crawl_skip_remarks" value="{{ value }}" {% if value in (config.get('crawl', {}).get('skip_remarks') or []) %}checked{% endif %}>
+                {{ label }}
+              </label>
+              {% endfor %}
+            </div>
           </div>
           <div class="field">
             <label for="crawl_max_new_per_run">crawl.max_new_per_run</label>
