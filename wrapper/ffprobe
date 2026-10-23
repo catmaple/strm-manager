@@ -1,5 +1,5 @@
 #!/bin/bash
-REAL=/usr/lib/jellyfin-ffmpeg/ffprobe
+REAL=/usr/lib/jellyfin-ffmpeg/ffprobe.real
 args=()
 inserted=0
 argv=("$@")

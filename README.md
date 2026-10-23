@@ -214,10 +214,15 @@ docker compose logs --tail 100 strm-manager
 curl -I --max-time 10 http://127.0.0.1:3000/
 curl -i --max-time 10 http://127.0.0.1:8096/health
 docker exec decotv-redis redis-cli ping
-docker exec jellyfin ls -l /wrapper/ffmpeg /wrapper/ffprobe
+docker exec jellyfin ls -l \
+  /usr/lib/jellyfin-ffmpeg/ffmpeg \
+  /usr/lib/jellyfin-ffmpeg/ffmpeg.real \
+  /usr/lib/jellyfin-ffmpeg/ffprobe \
+  /usr/lib/jellyfin-ffmpeg/ffprobe.real
+docker exec jellyfin /usr/lib/jellyfin-ffmpeg/ffmpeg -version
 ```
 
-预期 Redis 返回 `PONG`，Jellyfin 健康检查返回 HTTP 成功状态，包装脚本存在且可执行。若 DecoTV 启动日志出现 Redis 连接错误，查看本 README 的“已知问题”部分，并核实当前 DecoTV 版本使用的 Redis 环境变量。
+预期 Redis 返回 `PONG`，Jellyfin 健康检查返回 HTTP 成功状态。`ffmpeg` 和 `ffprobe` 是包装脚本，原版程序分别保留为 `.real` 文件；包装脚本应可执行，`ffmpeg -version` 应能正常输出版本。若 DecoTV 启动日志出现 Redis 连接错误，查看本 README 的“已知问题”部分，并核实当前 DecoTV 版本使用的 Redis 环境变量。
 
 ## 6. 完成 DecoTV 和 Jellyfin 初始化
 
@@ -243,12 +248,12 @@ docker exec jellyfin ls -l /wrapper/ffmpeg /wrapper/ffprobe
 3. 创建“节目/Shows”库，目录设为 `/media/tv`。该容器内路径映射到宿主机的 `/media/shows`。
 4. 可关闭章节图片提取和 Trickplay/预览图生成，避免 Jellyfin 对远程 STRM 流进行大量探测。
 5. 在 Dashboard → Advanced → API Keys 创建 API Key，稍后填入管理网页的 `jellyfin.api_key`。
-6. 在 Dashboard → Playback → Transcoding 中，将 FFmpeg path 设置为 `/wrapper/ffmpeg` 并保存。
+6. Jellyfin 的 FFmpeg path 固定为 `/usr/lib/jellyfin-ffmpeg/ffmpeg`，无需也无法在网页中改成 `/wrapper/ffmpeg`。项目构建的 Jellyfin 镜像会将包装脚本安装到这个固定路径，并把原版 FFmpeg 保留为 `/usr/lib/jellyfin-ffmpeg/ffmpeg.real`。
 
-如需网页端播放带特殊 HLS 切片后缀的流，可用真实 m3u8 地址测试包装器：
+如需网页端播放带特殊 HLS 切片后缀的流，可用真实 m3u8 地址测试已安装到 Jellyfin 固定路径的包装器：
 
 ```bash
-docker exec jellyfin /wrapper/ffprobe -v error \
+docker exec jellyfin /usr/lib/jellyfin-ffmpeg/ffprobe -v error \
   -show_entries stream=codec_type,codec_name -of compact \
   -i "https://替换为可用播放地址/index.m3u8"
 ```
@@ -449,7 +454,7 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 | DecoTV 一直显示本地存储或日志 Redis 连接失败 | `docker compose logs --tail 100 decotv decotv-redis`；手册中使用的 `REDIS_URL` 需按当前 DecoTV 版本确认 |
 | 源分类查询失败 | 检查 `config.json` 的 CMS 地址、`crawl.sources` 和 `via_decotv`；确认 DecoTV 登录 API 路径和请求字段适用于当前版本 |
 | STRM 已生成但 Jellyfin 无内容 | 检查宿主机 `/media/movies`、`/media/shows` 是否有文件；Jellyfin 容器内媒体库路径应为 `/media/movies`、`/media/tv`，再触发库扫描 |
-| HLS 剧集无法播放 | 确认 Jellyfin FFmpeg path 是 `/wrapper/ffmpeg`，并用真实 m3u8 地址测试 `/wrapper/ffprobe` |
+| HLS 剧集无法播放 | 确认 Jellyfin FFmpeg path 是 `/usr/lib/jellyfin-ffmpeg/ffmpeg`，并用真实 m3u8 地址测试 `/usr/lib/jellyfin-ffmpeg/ffprobe`；查看 FFmpeg 转码日志确认具体失败原因 |
 | GHCR 拉取失败 | 检查镜像是否已由 GitHub Actions 发布，以及 GitHub Packages 是否设为 Public；私有包需要先 `docker login ghcr.io` |
 | `redis:7-alpine` 报 `dial tcp [IPv6地址]:443: connect: network is unreachable` | Docker Hub 解析到了 IPv6 地址，但服务器没有可用 IPv6 出口；按下方步骤检查 IPv4/IPv6 网络，并为 Docker daemon 配置网络代理或可用的 registry mirror |
 
