@@ -1,65 +1,147 @@
 # DecoTV + STRM 管理容器
 
-首版把手册中的 11 个 Python 脚本、配置网页和定时运行入口打包进 `strm-manager` 容器。DecoTV、Redis、Jellyfin 保持独立，最终由同一份 Compose 启动四个服务。
+将现有 STRM Python 脚本、配置网页和定时任务封装在 `strm-manager` 容器中，并通过 Docker Compose 一次启动四个服务：
 
-## 部署文件与数据目录
+| 服务 | 用途 | 地址/端口 |
+|---|---|---|
+| DecoTV | 浏览视频源、提供源请求代理 | `http://服务器IP:3000` |
+| Redis | DecoTV 数据持久化 | 仅 Compose 内部访问 |
+| Jellyfin | 媒体库及客户端播放服务 | `http://服务器IP:8096` |
+| STRM Manager | 配置网页、脚本和定时任务 | 默认仅服务器本机 `127.0.0.1:8080` |
+
+运行数据保存在部署目录的 `data/` 中，不打包进镜像。更新容器镜像不会删除配置、Redis 数据、Jellyfin 数据和 STRM 媒体文件。
+
+## 1. 准备 Linux 主机
+
+以下示例适用于 Debian 12 / Ubuntu 主机。建议至少 2 核 CPU、4 GB 内存，并为 Jellyfin 元数据和缓存预留足够磁盘空间。
+
+### 系统基础软件
+
+```bash
+apt update && apt upgrade -y
+apt install -y curl ca-certificates openssl
+
+# Docker Engine、Buildx 和 Docker Compose plugin
+curl -fsSL https://get.docker.com | sh
+systemctl enable --now docker
+
+docker version
+docker compose version
+```
+
+本部署不需要在宿主机安装 Python、cron 或 Redis：脚本、Python 运行环境和定时任务在 STRM Manager 容器中，Redis 也由 Compose 启动。
+
+> 如果 `apt` 提示 locale 警告，通常可忽略；需要配置时可安装 `locales` 后运行 `dpkg-reconfigure locales`。
+>
+> 国内网络拉取 GHCR、Docker Hub 或 DecoTV 镜像较慢时，请为 Docker 配置可用的网络代理或镜像加速。
+
+## 2. 下载部署文件并设置密码
+
+创建独立部署目录，之后的 Compose、配置和数据都放在此目录中：
+
+```bash
+mkdir -p /opt/strm-manager
+cd /opt/strm-manager
+
+curl -fsSLo compose.yaml \
+  https://raw.githubusercontent.com/catmaple/strm-manager/main/compose.yaml
+curl -fsSLo .env.example \
+  https://raw.githubusercontent.com/catmaple/strm-manager/main/.env.example
+cp .env.example .env
+chmod 600 .env
+```
+
+编辑环境变量：
+
+```bash
+nano .env
+```
+
+可用 OpenSSL 生成随机密码和会话密钥：
+
+```bash
+printf 'STRM_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+printf 'STRM_SESSION_SECRET=%s\n' "$(openssl rand -hex 32)"
+printf 'DECOTV_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+```
+
+将生成的值分别填入 `.env` 对应变量。管理员密码和 DecoTV 密码不要共用。
+
+必须替换所有 `CHANGE_ME` 示例值。变量说明：
+
+| 变量 | 用途 |
+|---|---|
+| `STRM_ADMIN_USER` | 管理网页登录用户名 |
+| `STRM_ADMIN_PASSWORD` | 管理网页登录密码，至少 12 个字符 |
+| `STRM_SESSION_SECRET` | 网页会话签名密钥，至少 32 个字符 |
+| `STRM_PORT` | 管理网页宿主机端口，默认 8080 |
+| `TZ` | 容器时区，默认 `Asia/Shanghai` |
+| `DECOTV_USERNAME` / `DECOTV_PASSWORD` | DecoTV 管理账号 |
+| `STRM_MANAGER_IMAGE` / `JELLYFIN_IMAGE` | 镜像名，默认使用 GHCR 的 `latest` 发布镜像 |
+
+不要把 `.env` 上传到公开仓库或发送给他人。密码尽量避免使用未处理的 `$` 字符，因为 Compose 会对环境变量中的 `$` 做插值。
+
+## 3. 创建持久化目录并检查权限
+
+```bash
+mkdir -p \
+  data/manager \
+  data/redis \
+  data/jellyfin/config \
+  data/jellyfin/cache \
+  data/media/movies \
+  data/media/tv
+
+# 常见 Redis 和 Jellyfin 镜像的运行 UID
+chown -R 999:999 data/redis
+chown -R 1000:1000 data/jellyfin/config data/jellyfin/cache
+```
+
+如果所用镜像版本的运行 UID 不同，请按镜像文档调整对应目录所有者。`data/media` 必须允许 STRM Manager 写入，并允许 Jellyfin 读取。当前管理容器以 root 身份运行，同时移除了 Linux capabilities，以兼容既有 STRM 写入目录权限。
+
+目录用途：
 
 ```text
-compose.yaml             Compose 部署定义（下载到服务器）
-compose.build.yaml       可选的本地源码构建配置
-.env                     本地环境变量与密码（自行创建，不要提交）
 data/
-  manager/config.json    脚本配置
-  manager/*.json         抓取、线路和统计状态文件
-  manager/logs/          定时任务、Telegram 日志
-  manager/backups/       配置自动备份
-  redis/                 Redis 持久化数据
-  jellyfin/              Jellyfin 配置、缓存
-  media/movies/          电影 STRM
-  media/tv/              剧集 STRM
+  manager/
+    config.json       网页管理的配置文件（首次启动自动生成）
+    crawl_state.json  批量抓取进度
+    health.json       线路复测状态
+    logs/             定时任务和 Telegram 日志
+    backups/          自动保存的配置备份
+  redis/              Redis 持久化数据
+  jellyfin/
+    config/           Jellyfin 用户、媒体库及元数据
+    cache/            Jellyfin 缓存
+  media/
+    movies/           电影 STRM
+    tv/               剧集 STRM
 ```
 
-`data/` 不进入镜像，可单独备份。管理容器内的脚本路径仍是 `/opt/m3u`，配置仍是 `/opt/m3u/config.json`；入口脚本把持久化目录链接到该路径，所以现有脚本状态文件布局不变。
+## 4. 拉取镜像并启动四个容器
 
-## 启动
+推荐使用发布镜像，**无需克隆源码或在服务器构建应用镜像**：
 
-### Docker（推荐：拉取发布镜像，零构建）
-
-GitHub Actions 会在代码推送到 `main` 后，自动构建并发布两个多架构镜像：
-
-- `ghcr.io/catmaple/strm-manager:latest`：Web 管理应用和现有脚本
-- `ghcr.io/catmaple/strm-manager-jellyfin:latest`：Jellyfin 加 FFmpeg/FFprobe 包装脚本
-
-首次发布后，请在 GitHub 仓库的 **Packages** 页面将这两个 Container package 设为 **Public**，这样用户才能匿名拉取镜像。
-
-在已安装 Docker Engine 和 Docker Compose v2 的 Linux 主机上，下载 Compose 文件和环境变量模板：
-
-```sh
-mkdir -p strm-manager
-cd strm-manager
-curl -fsSLo compose.yaml https://raw.githubusercontent.com/catmaple/strm-manager/main/compose.yaml
-curl -fsSLo compose.build.yaml https://raw.githubusercontent.com/catmaple/strm-manager/main/compose.build.yaml
-curl -fsSLo .env.example https://raw.githubusercontent.com/catmaple/strm-manager/main/.env.example
-cp .env.example .env
-```
-
-编辑 `.env`，替换所有 `CHANGE_ME` 示例值。管理员密码至少 12 位，Session Secret 至少 32 位。然后创建持久化目录，拉取预构建镜像并启动：
-
-```sh
-mkdir -p data/manager data/redis data/jellyfin/config data/jellyfin/cache \
-  data/media/movies data/media/tv
-sudo chown -R 999:999 data/redis
-sudo chown -R 1000:1000 data/jellyfin/config data/jellyfin/cache
+```bash
+cd /opt/strm-manager
+docker compose config -q
 docker compose pull
 docker compose up -d
 docker compose ps
 ```
 
-这是推荐的零构建部署方式。日常用户只需要能够访问 GHCR 拉取镜像，不需要安装 Git 或在服务器构建应用镜像。
+使用的镜像：
 
-### DecoTV、Redis、Jellyfin 容器配置
+- `ghcr.io/decohererk/decotv:latest`
+- `redis:7-alpine`
+- `ghcr.io/catmaple/strm-manager-jellyfin:latest`
+- `ghcr.io/catmaple/strm-manager:latest`
 
-以下三个服务定义已经包含在下载的 `compose.yaml` 中。单独列出便于查看每个容器使用的镜像、端口和数据卷；正常部署时无需再复制或追加这段配置。
+DecoTV 和 Redis 使用上游发布镜像。Jellyfin 包装镜像基于官方 Jellyfin 镜像，并加入本项目需要的 FFmpeg/FFprobe 包装脚本。GitHub Actions 在代码推送到 `main` 或创建 `v*` 版本 tag 后，构建并发布 STRM Manager 和 Jellyfin 包装镜像；首次发布成功后，需要在 GitHub 仓库的 **Packages** 页面将两个包设为 **Public**，用户才可以匿名拉取。
+
+### 容器配置参考
+
+以下服务定义已经包含在下载的 [compose.yaml](https://github.com/catmaple/strm-manager/blob/main/compose.yaml) 中，正常部署无需重复添加：
 
 ```yaml
 services:
@@ -103,45 +185,96 @@ services:
       - ./data/media:/media
 ```
 
-DecoTV 和 Redis 使用上游发布的现成镜像，Compose 会直接拉取；不需要在本机编译源码。Jellyfin 使用本项目发布的包装镜像，该镜像基于官方 `jellyfin/jellyfin` 并预装 `/wrapper/ffmpeg`、`/wrapper/ffprobe`。GitHub Actions 会和管理应用镜像一起构建、发布 Jellyfin 包装镜像。四个服务的完整配置（包括 `strm-manager`）以仓库中的 [compose.yaml](https://github.com/catmaple/strm-manager/blob/main/compose.yaml) 为准。
+## 5. 查看服务状态和启动日志
 
-上面是常见 Redis/Jellyfin 镜像的容器 UID；如果你使用的镜像版本采用不同 UID，请按该镜像要求调整宿主机目录所有者。STRM 管理容器以 root 身份运行，以便沿用现有媒体目录写入权限，同时已移除 Linux capabilities。
+```bash
+cd /opt/strm-manager
+docker compose ps
 
-管理网页默认仅绑定在宿主机 `127.0.0.1:8080`，不会直接开放到局域网或公网。远程访问可通过 SSH 隧道：
-
-```sh
-ssh -L 8080:127.0.0.1:8080 user@服务器地址
+docker compose logs --tail 50 decotv
+docker compose logs --tail 50 decotv-redis
+docker compose logs --tail 50 jellyfin
+docker compose logs --tail 100 strm-manager
 ```
 
-然后在本机浏览器打开 <http://127.0.0.1:8080>。使用 `.env` 中的 `STRM_ADMIN_USER` 和 `STRM_ADMIN_PASSWORD` 登录。若要从可信局域网直接访问，可将 `compose.yaml` 中管理服务端口映射左侧的 `127.0.0.1` 改为服务器内网 IP；不要将管理端口直接暴露到公网。
+确认四个容器均为 `Up`。Redis 健康检查通过时显示 `healthy`。管理应用的健康检查通过时显示 `healthy`。
 
-DecoTV 和 Jellyfin 的端口分别是 3000、8096。请按现有方式完成 DecoTV 初始化、配置视频源、创建脚本专用用户，以及 Jellyfin 初始化和媒体库设置。
+检查 DecoTV、Jellyfin、Redis 端口和包装脚本：
 
-### 源码构建（可选）
-
-需要自行修改代码或在镜像发布前试用时，在 Linux 主机克隆仓库：
-
-```sh
-git clone https://github.com/catmaple/strm-manager.git
-cd strm-manager
-cp .env.example .env
-# 编辑 .env 并创建上文列出的 data 目录
-docker compose -f compose.yaml -f compose.build.yaml up -d --build
+```bash
+curl -I --max-time 10 http://127.0.0.1:3000/
+curl -i --max-time 10 http://127.0.0.1:8096/health
+docker exec decotv-redis redis-cli ping
+docker exec jellyfin ls -l /wrapper/ffmpeg /wrapper/ffprobe
 ```
 
-源码构建时使用本地工作区的 Dockerfile；构建出的镜像仍使用 Compose 中配置的镜像名。
+预期 Redis 返回 `PONG`，Jellyfin 健康检查返回 HTTP 成功状态，包装脚本存在且可执行。若 DecoTV 启动日志出现 Redis 连接错误，查看本 README 的“已知问题”部分，并核实当前 DecoTV 版本使用的 Redis 环境变量。
 
-## 配置网页
+## 6. 完成 DecoTV 和 Jellyfin 初始化
 
-登录后可编辑完整 `config.json`。页面提供 JSON 格式化和服务连通状态：
+### DecoTV
 
-- 保存前校验 JSON、常用字段类型和范围。
-- 保存采用临时文件加原子替换；修改前自动备份，保留最近 10 份。
-- 密码、Cookie、Token 和 Jellyfin API Key 不会回显。留空保留原值；将值设为 JSON `null` 可清除。
-- 配置文件权限为 `0600`。配置页面需要管理员登录，表单有 CSRF 校验。
-- 脚本在每次启动时读取配置；保存后下次任务会使用新配置。Telegram Token 或授权 Chat ID 变化后机器人进程会自动重启。
+浏览器打开 `http://服务器IP:3000/login`，使用 `.env` 中的 `DECOTV_USERNAME` 和 `DECOTV_PASSWORD` 登录。
 
-**容器地址要使用 Compose 服务名，而不是 `127.0.0.1`：**
+1. 在管理页面配置可用的视频源。
+2. 创建供脚本使用的普通用户（例如 `script`），不要将管理员账号密码填入脚本配置。
+3. 在 DecoTV 管理页验证视频源、搜索和播放功能。
+4. 如果使用 Redis 存储，检查 `/admin` 页面不再提示本地存储模式，并检查数据目录：
+
+   ```bash
+   ls -la data/redis
+   ```
+
+### Jellyfin
+
+浏览器打开 `http://服务器IP:8096`，完成首次设置：
+
+1. 创建 Jellyfin 管理员用户。
+2. 创建“电影”库，目录设为 `/media/movies`。
+3. 创建“节目/Shows”库，目录设为 `/media/tv`。
+4. 可关闭章节图片提取和 Trickplay/预览图生成，避免 Jellyfin 对远程 STRM 流进行大量探测。
+5. 在 Dashboard → Advanced → API Keys 创建 API Key，稍后填入管理网页的 `jellyfin.api_key`。
+6. 在 Dashboard → Playback → Transcoding 中，将 FFmpeg path 设置为 `/wrapper/ffmpeg` 并保存。
+
+如需网页端播放带特殊 HLS 切片后缀的流，可用真实 m3u8 地址测试包装器：
+
+```bash
+docker exec jellyfin /wrapper/ffprobe -v error \
+  -show_entries stream=codec_type,codec_name -of compact \
+  -i "https://替换为可用播放地址/index.m3u8"
+```
+
+## 7. 打开 STRM Manager 网页并配置脚本
+
+管理网页默认绑定在宿主机 `127.0.0.1:8080`，不会直接开放到局域网或公网。可以在服务器本机访问，或从自己的电脑建立 SSH 隧道：
+
+```bash
+ssh -L 8080:127.0.0.1:8080 用户名@服务器IP
+```
+
+保持 SSH 会话连接，在本机浏览器打开 <http://127.0.0.1:8080>，用 `.env` 中的 `STRM_ADMIN_USER`、`STRM_ADMIN_PASSWORD` 登录。
+
+如需允许可信局域网直接访问，编辑 `compose.yaml`，将管理服务端口映射：
+
+```yaml
+- "127.0.0.1:${STRM_PORT:-8080}:8080"
+```
+
+改为服务器内网地址，例如：
+
+```yaml
+- "192.168.1.110:${STRM_PORT:-8080}:8080"
+```
+
+然后应用配置：
+
+```bash
+docker compose up -d strm-manager
+```
+
+不要把管理网页、DecoTV 或 Jellyfin 管理端口直接暴露到公网；远程使用请通过 VPN、SSH 隧道或配置妥当的 HTTPS 反向代理。
+
+管理页面中的 `config.json` 按现有格式保存。Docker Compose 网络内要使用服务名，而不是 `127.0.0.1`：
 
 ```json
 {
@@ -149,62 +282,142 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
     "url": "http://decotv:3000"
   },
   "login": {
-    "url": "http://decotv:3000/api/login"
+    "url": "http://decotv:3000/api/login",
+    "username": "script",
+    "password": "填入 DecoTV 脚本专用用户密码"
   },
   "jellyfin": {
-    "url": "http://jellyfin:8096"
+    "url": "http://jellyfin:8096",
+    "api_key": "填入 Jellyfin API Key"
+  },
+  "cms_apis": [
+    "https://你的CMS接口/api.php/provide/vod"
+  ],
+  "crawl": {
+    "via_decotv": true,
+    "sources": []
   }
 }
 ```
 
-首次启动会生成一份空白默认配置，视频源和凭据需要由你在网页中填入。将原有配置迁移时，建议先备份并检查上面三个服务地址，以及 `list_urls` 中是否仍有旧的本机地址。
+保存完整配置时应保留默认文件中其他抓取和复测参数。页面会校验 JSON 和常用字段，自动备份最近 10 份配置；密码、Cookie、Telegram Token、Jellyfin API Key 不会回显。留空表示沿用已有值，设置为 JSON `null` 可以清除密钥。
 
-迁移现有部署时，建议在首次启动新栈之前复制数据：现有 `/opt/m3u/config.json` 放到 `data/manager/config.json`；`crawl_state.json`、`state.json`、`health.json`、`stats_snapshot.json` 放到 `data/manager/`；Redis 数据复制到 `data/redis/`；Jellyfin 的 `config/`、`cache/` 复制到 `data/jellyfin/config/` 和 `data/jellyfin/cache/`；现有 `/media/movies`、`/media/tv` 内容复制到 `data/media/`。先停掉旧任务再复制，且保留独立备份。复制后再运行 Compose，检查所有目录权限。
+测试配置与源访问：
 
-## 自动运行
-
-管理容器内置原有计划：
-
-- 每日 02:00：运行 `crawl.py`
-- 每日 04:30：运行 `recheck.py`
-- 每周日 09:00：运行 `stats.py`
-
-容器时区由 `.env` 的 `TZ` 决定，默认 `Asia/Shanghai`。这些计划任务之间有互斥锁；日志保存在 `data/manager/logs/`。配置 Telegram Token 和非空 `allowed_chat_ids` 后，容器会启动现有 `bot.py`；不配置时不会启动机器人。手动脚本仍可通过容器内命令运行，例如：
-
-```sh
+```bash
+cd /opt/strm-manager
+docker compose exec strm-manager python -m json.tool /data/config.json
 docker compose exec strm-manager python /opt/m3u/crawl.py --types
+```
+
+`crawl.py --types` 应列出已配置源的分类。没有配置 `crawl.sources` 或源接口无法访问时，先回管理网页修正配置，不要开始大批量抓取。
+
+## 8. 验证 STRM 入库与播放
+
+先小批量测试，避免首次就触发大量远程探测：
+
+```bash
+docker compose exec strm-manager python /opt/m3u/crawl.py --dry --new 5 --pages 5
+```
+
+确认预览内容和电影/剧集分类符合预期后，可按实际源分类 ID 执行少量真实抓取，例如：
+
+```bash
+docker compose exec strm-manager python /opt/m3u/crawl.py --new 5 --pages 5 --type 6
+```
+
+检查 STRM 文件：
+
+```bash
+find data/media -name '*.strm' -type f | head
+```
+
+然后在 Jellyfin 管理页扫描媒体库，确认条目出现，并分别用 Jellyfin 网页端和目标客户端（VidHub、Infuse、SenPlayer）实际测试播放。必要时可执行：
+
+```bash
+docker compose exec strm-manager python /opt/m3u/add.py "片名"
 docker compose exec strm-manager python /opt/m3u/recheck.py --dry --force
 docker compose exec strm-manager python /opt/m3u/stats.py --no-send
 ```
 
-## Jellyfin 包装脚本
+## 9. 自动任务和日志
 
-Compose 会基于 `jellyfin/jellyfin:latest` 构建一个很薄的自定义镜像，将 `wrapper/ffmpeg` 和 `wrapper/ffprobe` 复制到 Jellyfin 容器的 `/wrapper` 并设置可执行权限。Jellyfin 初始化后，如现有手册所述，把 FFmpeg 路径设置为 `/wrapper/ffmpeg`。这两个包装脚本运行于 Jellyfin 容器，不在管理应用容器中；部署仍只有四个运行容器。
+管理容器内置原有计划，按 `.env` 中的 `TZ` 时区执行：
 
-## 更新与备份
+- 每日 02:00：`crawl.py` 批量抓取
+- 每日 04:30：`recheck.py` 线路复测
+- 每周日 09:00：`stats.py` 周统计
 
-GitHub Actions 在 `main` 构建成功后会更新 `latest` 镜像。在服务器部署目录更新 Compose 文件并拉取新镜像：
+任务互斥，定时任务日志保存在 `data/manager/logs/`。查看容器输出和持久化日志：
 
-```sh
-curl -fsSLo compose.yaml https://raw.githubusercontent.com/catmaple/strm-manager/main/compose.yaml
-docker compose pull
-docker compose up -d
+```bash
+docker compose logs -f strm-manager
+tail -n 100 data/manager/logs/scheduler.log
+tail -n 100 data/manager/logs/crawl.log
+tail -n 100 data/manager/logs/recheck.log
 ```
 
-升级前备份 `data/` 和 `.env`。`.env` 包含登录凭据，不能公开分享。恢复时停止 Compose，将数据恢复到原目录后再启动。
+如需使用 Telegram 机器人，在网页配置 `telegram.token` 和非空的 `telegram.allowed_chat_ids`。机器人只响应授权的 Chat ID；更改 Token 或授权列表后，管理容器会自动重启机器人进程。
 
-要固定到某个版本，可在 `.env` 中设置对应镜像 tag，例如：
+## 10. 迁移现有部署
+
+迁移前先停止旧版 cron/systemd 任务和机器人，避免新旧环境同时写入状态文件；保留一份完整备份。将数据复制到新部署目录：
+
+| 原路径 | 新路径 |
+|---|---|
+| `/opt/m3u/config.json` | `data/manager/config.json` |
+| `/opt/m3u/crawl_state.json`、`state.json`、`health.json`、`stats_snapshot.json` | `data/manager/` |
+| DecoTV Redis 数据目录 | `data/redis/` |
+| Jellyfin `config/` | `data/jellyfin/config/` |
+| Jellyfin `cache/` | `data/jellyfin/cache/` |
+| `/media/movies/` 中的内容 | `data/media/movies/` |
+| `/media/tv/` 中的内容 | `data/media/tv/` |
+
+复制完成后核对文件和目录权限，再启动新 Compose。迁移的 `config.json` 中，DecoTV 和 Jellyfin 地址需使用 `http://decotv:3000` 与 `http://jellyfin:8096`。迁移期间不要删除旧部署或备份；确认新环境完成抓取、扫描和客户端播放后，再下线旧服务。
+
+## 11. 更新、版本固定与源码构建
+
+发布新代码后，更新 Compose 并拉取新镜像：
+
+```bash
+cd /opt/strm-manager
+curl -fsSLo compose.yaml \
+  https://raw.githubusercontent.com/catmaple/strm-manager/main/compose.yaml
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+要固定版本，在 `.env` 中指定相同版本的管理应用和 Jellyfin 包装镜像：
 
 ```dotenv
 STRM_MANAGER_IMAGE=ghcr.io/catmaple/strm-manager:v1.0.0
 JELLYFIN_IMAGE=ghcr.io/catmaple/strm-manager-jellyfin:v1.0.0
 ```
 
-推送 `v*` Git tag 时，GitHub Actions 也会发布同名版本镜像。
+推送 `v*` Git tag 后，GitHub Actions 会发布相同名称的镜像 tag。升级前备份 `data/` 和 `.env`；`.env` 含有登录凭据，不要公开分享。
 
-## 已知范围
+需要自行修改代码时才需要克隆仓库并本地构建：
 
-- 首版网页管理 `config.json`，没有提供网页手动启动任务；可使用上面的 `docker compose exec` 命令，或现有 Telegram 机器人。
-- DecoTV 的 Redis 环境变量和登录 API 路径仍需按实际 DecoTV 镜像版本验证。当前配置默认采用手册中的 `REDIS_URL` 和 `/api/login`。
-- 容器化脚本对 DecoTV 地址的必要适配仅使用 `decotv.url`，抓取、STRM 生成和线路选择逻辑沿用现有脚本。
-- 在正式迁移前，先在测试环境验证 DecoTV 登录/代理、抓取、Jellyfin 扫描及 VidHub/Infuse/SenPlayer 播放；不要直接覆盖旧数据目录。
+```bash
+git clone https://github.com/catmaple/strm-manager.git
+cd strm-manager
+cp .env.example .env
+# 编辑 .env、创建 data 持久化目录
+docker compose -f compose.yaml -f compose.build.yaml up -d --build
+```
+
+## 12. 故障排查与已知限制
+
+| 现象 | 检查方式 |
+|---|---|
+| 管理页面打不开 | `docker compose ps`、`docker compose logs --tail 100 strm-manager`；确认 `.env` 管理密码不少于 12 位、Session Secret 不少于 32 位 |
+| DecoTV 一直显示本地存储或日志 Redis 连接失败 | `docker compose logs --tail 100 decotv decotv-redis`；手册中使用的 `REDIS_URL` 需按当前 DecoTV 版本确认 |
+| 源分类查询失败 | 检查 `config.json` 的 CMS 地址、`crawl.sources` 和 `via_decotv`；确认 DecoTV 登录 API 路径和请求字段适用于当前版本 |
+| STRM 已生成但 Jellyfin 无内容 | 检查 Jellyfin 媒体库是否映射到 `/media/movies`、`/media/tv`，再触发库扫描 |
+| HLS 剧集无法播放 | 确认 Jellyfin FFmpeg path 是 `/wrapper/ffmpeg`，并用真实 m3u8 地址测试 `/wrapper/ffprobe` |
+| GHCR 拉取失败 | 检查镜像是否已由 GitHub Actions 发布，以及 GitHub Packages 是否设为 Public；私有包需要先 `docker login ghcr.io` |
+
+- 首版网页用于管理现有 `config.json`，不提供手动启动任务按钮；可使用上述 `docker compose exec` 命令或 Telegram 机器人。
+- DecoTV Redis 配置变量、登录 API 路径和请求字段应按实际部署版本验证。
+- 正式迁移前，先在测试环境验证 DecoTV 登录/代理、抓取、Jellyfin 扫描及目标客户端播放。
