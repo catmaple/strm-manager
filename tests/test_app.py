@@ -83,6 +83,130 @@ class ConfigWebTests(unittest.TestCase):
         for secret in ("cookie-secret", "login-secret", "jellyfin-secret", "telegram-secret"):
             self.assertNotIn(secret, body)
         self.assertIn("unknown_option", body)
+        for field in ("cookie", "login_password", "jellyfin_api_key", "telegram_token"):
+            self.assertRegex(
+                body,
+                rf'<input id="{field}"[^>]*value="{re.escape(manager.SECRET_MASK)}"',
+            )
+
+    def test_form_masks_keep_existing_secrets(self):
+        parsed = manager.config_from_form({
+            "cookie": manager.SECRET_MASK,
+            "login_password": manager.SECRET_MASK,
+            "jellyfin_api_key": manager.SECRET_MASK,
+            "telegram_token": manager.SECRET_MASK,
+        })
+        self.assertEqual(parsed["cookie"], "")
+        self.assertEqual(parsed["login"]["password"], "")
+        self.assertEqual(parsed["jellyfin"]["api_key"], "")
+        self.assertEqual(parsed["telegram"]["token"], "")
+
+    @patch.object(manager, "test_service_connections", return_value="DecoTV：正常\nJellyfin：正常")
+    def test_test_connection_action(self, mock_test):
+        self.authenticate()
+        response = self.client.post(
+            "/",
+            data={"csrf_token": "test-csrf", "action": "test_connection"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(mock_test.called)
+
+    @patch.object(manager, "run_dry_run", return_value="Dry Run 完成（退出码 0）\n模拟抓取 0 项")
+    def test_dry_run_action(self, mock_dry_run):
+        self.authenticate()
+        response = self.client.post(
+            "/",
+            data={"csrf_token": "test-csrf", "action": "dry_run"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(mock_dry_run.called)
+
+    @patch.object(manager, "run_dry_run", return_value="Dry Run 完成（退出码 0）\n模拟抓取 0 项")
+    def test_last_action_result_is_displayed(self, _mock_dry_run):
+        self.authenticate()
+        self.client.post(
+            "/",
+            data={"csrf_token": "test-csrf", "action": "dry_run"},
+        )
+        response = self.client.get("/")
+        body = response.get_data(as_text=True)
+        self.assertIn("最近操作结果", body)
+        self.assertIn("Dry Run 完成（退出码 0）", body)
+
+    @patch.object(manager.urllib.request, "urlopen")
+    def test_discover_sources_from_cms_apis(self, mock_urlopen):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+            def read(self):
+                return json.dumps({"class": [{"type_id": "1", "type_name": "电影"}, {"type_id": "2", "type_name": "连续剧"}]}).encode("utf-8")
+            def __iter__(self):
+                return iter([json.dumps({"class": [{"type_id": "1", "type_name": "电影"}, {"type_id": "2", "type_name": "连续剧"}]})])
+        mock_urlopen.return_value = FakeResponse()
+        sources = manager.discover_sources_from_cms_apis(["https://hhzyapi.com/api.php/provide/vod"])
+        self.assertEqual(sources[0]["types"]["1"], "movie")
+        self.assertEqual(sources[0]["types"]["2"], "tv")
+
+    def test_cms_api_presets_include_common_providers(self):
+        self.assertIn("https://hhzyapi.com/api.php/provide/vod", manager.CMS_API_PRESETS)
+        self.assertIn("https://api.xinlangapi.com/xinlangapi.php/provide/vod/", manager.CMS_API_PRESETS)
+
+    @patch.object(manager, "discover_sources_from_cms_apis", return_value=[{"name": "example.com", "api": "https://example.com", "types": {"1": "movie"}}])
+    def test_generate_sources_action(self, mock_generate):
+        self.authenticate()
+        response = self.client.post(
+            "/",
+            data={
+                "csrf_token": "test-csrf",
+                "action": "generate_sources",
+                "cms_apis": '["https://example.com/api.php/provide/vod"]',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(mock_generate.called)
+
+    def test_scheduler_form_parses_schedule_settings(self):
+        parsed = manager.config_from_form({
+            "scheduler_enabled": "on",
+            "scheduler_crawl_enabled": "on",
+            "scheduler_crawl_script": "crawl",
+            "scheduler_crawl_hour": "02",
+            "scheduler_crawl_minute": "15",
+            "scheduler_recheck_enabled": "off",
+            "scheduler_recheck_hour": "04",
+            "scheduler_recheck_minute": "30",
+            "scheduler_stats_enabled": "on",
+            "scheduler_stats_weekday": "6",
+            "scheduler_stats_hour": "09",
+            "scheduler_stats_minute": "00",
+        })
+        self.assertTrue(parsed["scheduler"]["enabled"])
+        self.assertEqual(parsed["scheduler"]["crawl"]["script"], "crawl")
+        self.assertEqual(parsed["scheduler"]["crawl"]["hour"], 2)
+        self.assertEqual(parsed["scheduler"]["crawl"]["minute"], 15)
+        self.assertEqual(parsed["scheduler"]["stats"]["weekday"], 6)
+
+    @patch.object(manager, "run_manual_job", return_value="已启动任务：指定源抓取")
+    def test_run_manual_job_action(self, mock_run_manual_job):
+        self.authenticate()
+        response = self.client.post(
+            "/",
+            data={"csrf_token": "test-csrf", "action": "run_job_crawl"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(mock_run_manual_job.called)
+
+    @patch.object(manager, "run_manual_job", return_value="已启动任务：默认分类抓取")
+    def test_run_manual_auto_job_action(self, mock_run_manual_job):
+        self.authenticate()
+        response = self.client.post(
+            "/",
+            data={"csrf_token": "test-csrf", "action": "run_job_auto"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(mock_run_manual_job.called)
 
     def test_save_preserves_blank_secrets_and_unknown_fields(self):
         self.authenticate()

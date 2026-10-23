@@ -45,22 +45,287 @@
     <section class="card">
       <div class="section-heading">
         <div>
-          <h2>配置文件</h2>
-          <p class="muted">编辑完整 JSON；密码、Cookie、Token 和 API 密钥会隐藏，留空表示保留原值。</p>
+          <h2>配置表单</h2>
+          <p class="muted">填写常用参数；密码、Cookie、Token 和 API Key 会保密，留空表示保留原值。</p>
         </div>
-        <button class="secondary" type="button" id="format-json">格式化 JSON</button>
       </div>
       <div class="callout">
         Docker 网络内的地址应使用服务名，例如 <code>http://decotv:3000</code> 和 <code>http://jellyfin:8096</code>，不要使用容器内的 <code>127.0.0.1</code>。
-        清空已有密钥请将对应 JSON 值改为 <code>null</code>。
+        复杂列表（如 <code>sources</code>、<code>skip_remarks</code>）请按 JSON 数组填写；密钥留空会保留现有值。
       </div>
+      {% if last_action_result %}
+      <div class="results-panel">
+        <h3>最近操作结果</h3>
+        <pre>{{ last_action_result }}</pre>
+      </div>
+      {% endif %}
       <form method="post" action="{{ url_for('index') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <label for="config-json">config.json</label>
-        <textarea id="config-json" name="config_json" spellcheck="false" required>{{ config_json }}</textarea>
+
+        <h3>基础配置</h3>
+        <div class="form-grid">
+          {% if config.get('unknown_option') is not none %}
+          <div class="field field-wide">
+            <label>保留字段（未识别配置）</label>
+            <div class="muted">unknown_option</div>
+            <textarea rows="4" readonly>{{ config.get('unknown_option') | tojson }}</textarea>
+          </div>
+          {% endif %}
+          <div class="field field-wide">
+            <label for="list_urls">list_urls（JSON 数组）</label>
+            <textarea id="list_urls" name="list_urls" rows="4">{{ (config.get('list_urls') or []) | tojson }}</textarea>
+          </div>
+          <div class="field field-wide">
+            <label for="cms_api_custom">cms_apis（常用视频源 + 自定义）</label>
+            <div class="inline-actions" style="margin-bottom: 10px;">
+              <input id="cms_api_custom" list="cms-api-presets" type="url" placeholder="输入或选择 CMS API 地址" style="flex: 1; min-width: 240px;">
+              <button class="secondary" type="button" id="addCmsApiButton">添加</button>
+              <button class="secondary" type="button" id="clearCmsApiButton">清空</button>
+            </div>
+            <datalist id="cms-api-presets">
+              {% for option in cms_api_presets %}
+              <option value="{{ option }}"></option>
+              {% endfor %}
+            </datalist>
+            <div id="cmsApiTags" class="tag-list" aria-live="polite"></div>
+            <textarea id="cms_apis" name="cms_apis" rows="4">{{ (config.get('cms_apis') or []) | tojson }}</textarea>
+            <div id="cmsPreview" class="preview-box" aria-live="polite">等待生成预览…</div>
+            <div class="inline-actions">
+              <button class="secondary" type="submit" name="action" value="generate_sources">自动生成 crawl.sources</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="cookie">Cookie</label>
+            <input id="cookie" name="cookie" type="password" value="{{ '********' if config.get('cookie') else '' }}" placeholder="{{ '已配置，留空表示保留原值' if config.get('cookie') else '尚未配置' }}" autocomplete="off">
+          </div>
+        </div>
+
+        <h3>认证与服务地址</h3>
+        <div class="form-grid">
+          <div class="field">
+            <label for="decotv_url">DecoTV URL</label>
+            <input id="decotv_url" name="decotv_url" type="text" value="{{ config.get('decotv', {}).get('url', '') }}">
+          </div>
+          <div class="field">
+            <label for="login_url">DecoTV 登录 URL</label>
+            <input id="login_url" name="login_url" type="text" value="{{ config.get('login', {}).get('url', '') }}">
+          </div>
+          <div class="field">
+            <label for="login_username">DecoTV 登录用户名</label>
+            <input id="login_username" name="login_username" type="text" value="{{ config.get('login', {}).get('username', '') }}">
+          </div>
+          <div class="field">
+            <label for="login_password">DecoTV 登录密码</label>
+            <input id="login_password" name="login_password" type="password" value="{{ '********' if config.get('login', {}).get('password') else '' }}" placeholder="{{ '已配置，留空表示保留原值' if config.get('login', {}).get('password') else '尚未配置' }}" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="jellyfin_url">Jellyfin URL</label>
+            <input id="jellyfin_url" name="jellyfin_url" type="text" value="{{ config.get('jellyfin', {}).get('url', '') }}">
+          </div>
+          <div class="field">
+            <label for="jellyfin_api_key">Jellyfin API Key</label>
+            <input id="jellyfin_api_key" name="jellyfin_api_key" type="password" value="{{ '********' if config.get('jellyfin', {}).get('api_key') else '' }}" placeholder="{{ '已配置，留空表示保留原值' if config.get('jellyfin', {}).get('api_key') else '尚未配置' }}" autocomplete="off">
+          </div>
+        </div>
+
+        <h3>抓取与复测参数</h3>
+        <div class="form-grid">
+          <div class="field">
+            <label for="max_new_per_run">max_new_per_run</label>
+            <input id="max_new_per_run" name="max_new_per_run" type="number" value="{{ config.get('max_new_per_run', '') }}">
+          </div>
+          <div class="field">
+            <label for="max_pages">max_pages</label>
+            <input id="max_pages" name="max_pages" type="number" value="{{ config.get('max_pages', '') }}">
+          </div>
+          <div class="field">
+            <label for="max_lookups_per_run">max_lookups_per_run</label>
+            <input id="max_lookups_per_run" name="max_lookups_per_run" type="number" value="{{ config.get('max_lookups_per_run', '') }}">
+          </div>
+          <div class="field">
+            <label for="retry_miss_days">retry_miss_days</label>
+            <input id="retry_miss_days" name="retry_miss_days" type="number" value="{{ config.get('retry_miss_days', '') }}">
+          </div>
+          <div class="field">
+            <label for="recheck_min_headroom">recheck.min_headroom</label>
+            <input id="recheck_min_headroom" name="recheck_min_headroom" type="number" step="0.1" value="{{ config.get('recheck', {}).get('min_headroom', '') }}">
+          </div>
+          <div class="field">
+            <label for="recheck_switch_gain">recheck.switch_gain</label>
+            <input id="recheck_switch_gain" name="recheck_switch_gain" type="number" step="0.1" value="{{ config.get('recheck', {}).get('switch_gain', '') }}">
+          </div>
+          <div class="field">
+            <label for="recheck_interval_days">recheck.interval_days</label>
+            <input id="recheck_interval_days" name="recheck_interval_days" type="number" value="{{ config.get('recheck', {}).get('interval_days', '') }}">
+          </div>
+          <div class="field">
+            <label for="recheck_max_per_run">recheck.max_per_run</label>
+            <input id="recheck_max_per_run" name="recheck_max_per_run" type="number" value="{{ config.get('recheck', {}).get('max_per_run', '') }}">
+          </div>
+        </div>
+
+        <h3>定时任务</h3>
+        <div class="form-grid">
+          <div class="field checkbox-row field-wide">
+            <label for="scheduler_enabled">
+              <input id="scheduler_enabled" name="scheduler_enabled" type="checkbox" {% if config.get('scheduler', {}).get('enabled', True) %}checked{% endif %}>
+              启用定时任务总开关
+            </label>
+          </div>
+          <div class="field checkbox-row">
+            <label for="scheduler_crawl_enabled">
+              <input id="scheduler_crawl_enabled" name="scheduler_crawl_enabled" type="checkbox" {% if config.get('scheduler', {}).get('crawl', {}).get('enabled', True) %}checked{% endif %}>
+              批量抓取启用
+            </label>
+          </div>
+          <div class="field">
+            <label for="scheduler_crawl_script">抓取脚本</label>
+            <select id="scheduler_crawl_script" name="scheduler_crawl_script">
+              <option value="auto" {% if (config.get('scheduler', {}).get('crawl', {}).get('script', 'auto') or 'auto') == 'auto' %}selected{% endif %}>auto.py（默认分类）</option>
+              <option value="crawl" {% if (config.get('scheduler', {}).get('crawl', {}).get('script', 'auto') or 'auto') == 'crawl' %}selected{% endif %}>crawl.py（指定源）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="scheduler_crawl_hour">抓取时间（时）</label>
+            <input id="scheduler_crawl_hour" name="scheduler_crawl_hour" type="number" min="0" max="23" value="{{ config.get('scheduler', {}).get('crawl', {}).get('hour', 2) }}">
+          </div>
+          <div class="field">
+            <label for="scheduler_crawl_minute">抓取时间（分）</label>
+            <input id="scheduler_crawl_minute" name="scheduler_crawl_minute" type="number" min="0" max="59" value="{{ config.get('scheduler', {}).get('crawl', {}).get('minute', 0) }}">
+          </div>
+
+          <div class="field checkbox-row">
+            <label for="scheduler_recheck_enabled">
+              <input id="scheduler_recheck_enabled" name="scheduler_recheck_enabled" type="checkbox" {% if config.get('scheduler', {}).get('recheck', {}).get('enabled', True) %}checked{% endif %}>
+              线路复测启用
+            </label>
+          </div>
+          <div class="field">
+            <label for="scheduler_recheck_hour">复测时间（时）</label>
+            <input id="scheduler_recheck_hour" name="scheduler_recheck_hour" type="number" min="0" max="23" value="{{ config.get('scheduler', {}).get('recheck', {}).get('hour', 4) }}">
+          </div>
+          <div class="field">
+            <label for="scheduler_recheck_minute">复测时间（分）</label>
+            <input id="scheduler_recheck_minute" name="scheduler_recheck_minute" type="number" min="0" max="59" value="{{ config.get('scheduler', {}).get('recheck', {}).get('minute', 30) }}">
+          </div>
+
+          <div class="field checkbox-row">
+            <label for="scheduler_stats_enabled">
+              <input id="scheduler_stats_enabled" name="scheduler_stats_enabled" type="checkbox" {% if config.get('scheduler', {}).get('stats', {}).get('enabled', True) %}checked{% endif %}>
+              周统计启用
+            </label>
+          </div>
+          <div class="field">
+            <label for="scheduler_stats_weekday">周统计星期</label>
+            <select id="scheduler_stats_weekday" name="scheduler_stats_weekday">
+              {% for day in range(7) %}
+              <option value="{{ day }}" {% if config.get('scheduler', {}).get('stats', {}).get('weekday', 6) == day %}selected{% endif %}>{{ ['周一','周二','周三','周四','周五','周六','周日'][day] }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="scheduler_stats_hour">周统计时间（时）</label>
+            <input id="scheduler_stats_hour" name="scheduler_stats_hour" type="number" min="0" max="23" value="{{ config.get('scheduler', {}).get('stats', {}).get('hour', 9) }}">
+          </div>
+          <div class="field">
+            <label for="scheduler_stats_minute">周统计时间（分）</label>
+            <input id="scheduler_stats_minute" name="scheduler_stats_minute" type="number" min="0" max="59" value="{{ config.get('scheduler', {}).get('stats', {}).get('minute', 0) }}">
+          </div>
+        </div>
+
+        <h3>Telegram</h3>
+        <div class="form-grid">
+          <div class="field">
+            <label for="telegram_token">telegram.token</label>
+            <input id="telegram_token" name="telegram_token" type="password" value="{{ '********' if config.get('telegram', {}).get('token') else '' }}" placeholder="{{ '已配置，留空表示保留原值' if config.get('telegram', {}).get('token') else '尚未配置' }}" autocomplete="off">
+          </div>
+          <div class="field field-wide">
+            <label for="telegram_allowed_chat_ids">telegram.allowed_chat_ids（逗号分隔或 JSON 数组）</label>
+            <input id="telegram_allowed_chat_ids" name="telegram_allowed_chat_ids" type="text" value="{{ (config.get('telegram', {}).get('allowed_chat_ids', []) or []) | tojson }}">
+          </div>
+        </div>
+
+        <h3>抓取源配置</h3>
+        <div class="form-grid">
+          <div class="field checkbox-row">
+            <label for="crawl_via_decotv">
+              <input id="crawl_via_decotv" name="crawl_via_decotv" type="checkbox" {% if config.get('crawl', {}).get('via_decotv') %}checked{% endif %}>
+              crawl.via_decotv
+            </label>
+          </div>
+          <div class="field checkbox-row">
+            <label for="crawl_skip_unknown_year">
+              <input id="crawl_skip_unknown_year" name="crawl_skip_unknown_year" type="checkbox" {% if config.get('crawl', {}).get('skip_unknown_year') %}checked{% endif %}>
+              crawl.skip_unknown_year
+            </label>
+          </div>
+          <div class="field">
+            <label for="crawl_score_field">crawl.score_field</label>
+            <input id="crawl_score_field" name="crawl_score_field" type="text" value="{{ config.get('crawl', {}).get('score_field', 'douban') }}">
+          </div>
+          <div class="field">
+            <label for="crawl_min_score">crawl.min_score</label>
+            <input id="crawl_min_score" name="crawl_min_score" type="number" value="{{ config.get('crawl', {}).get('min_score', '') }}">
+          </div>
+          <div class="field">
+            <label for="crawl_max_age_years">crawl.max_age_years</label>
+            <input id="crawl_max_age_years" name="crawl_max_age_years" type="number" value="{{ config.get('crawl', {}).get('max_age_years', '') }}">
+          </div>
+          <div class="field">
+            <label for="crawl_min_year">crawl.min_year</label>
+            <input id="crawl_min_year" name="crawl_min_year" type="number" value="{{ config.get('crawl', {}).get('min_year', '') }}">
+          </div>
+          <div class="field field-wide">
+            <label for="crawl_sources">crawl.sources（JSON 数组）</label>
+            <textarea id="crawl_sources" name="crawl_sources" rows="6">{{ (config.get('crawl', {}).get('sources') or []) | tojson }}</textarea>
+          </div>
+          <div class="field field-wide">
+            <label for="crawl_skip_remarks">crawl.skip_remarks（JSON 数组）</label>
+            <textarea id="crawl_skip_remarks" name="crawl_skip_remarks" rows="4">{{ (config.get('crawl', {}).get('skip_remarks') or []) | tojson }}</textarea>
+          </div>
+          <div class="field">
+            <label for="crawl_max_new_per_run">crawl.max_new_per_run</label>
+            <input id="crawl_max_new_per_run" name="crawl_max_new_per_run" type="number" value="{{ config.get('crawl', {}).get('max_new_per_run', '') }}">
+          </div>
+          <div class="field">
+            <label for="crawl_max_pages_per_run">crawl.max_pages_per_run</label>
+            <input id="crawl_max_pages_per_run" name="crawl_max_pages_per_run" type="number" value="{{ config.get('crawl', {}).get('max_pages_per_run', '') }}">
+          </div>
+          <div class="field">
+            <label for="crawl_per_type_new">crawl.per_type_new</label>
+            <input id="crawl_per_type_new" name="crawl_per_type_new" type="number" value="{{ config.get('crawl', {}).get('per_type_new', '') }}">
+          </div>
+          <div class="field">
+            <label for="crawl_per_type_pages">crawl.per_type_pages</label>
+            <input id="crawl_per_type_pages" name="crawl_per_type_pages" type="number" value="{{ config.get('crawl', {}).get('per_type_pages', '') }}">
+          </div>
+          <div class="field">
+            <label for="crawl_backfill_max_pages">crawl.backfill_max_pages</label>
+            <input id="crawl_backfill_max_pages" name="crawl_backfill_max_pages" type="number" value="{{ config.get('crawl', {}).get('backfill_max_pages', '') }}">
+          </div>
+          <div class="field">
+            <label for="crawl_update_pages">crawl.update_pages</label>
+            <input id="crawl_update_pages" name="crawl_update_pages" type="number" value="{{ config.get('crawl', {}).get('update_pages', '') }}">
+          </div>
+          <div class="field">
+            <label for="crawl_max_eps">crawl.max_eps</label>
+            <input id="crawl_max_eps" name="crawl_max_eps" type="number" value="{{ config.get('crawl', {}).get('max_eps', '') }}">
+          </div>
+          <div class="field">
+            <label for="crawl_delay">crawl.delay</label>
+            <input id="crawl_delay" name="crawl_delay" type="number" step="0.1" value="{{ config.get('crawl', {}).get('delay', '') }}">
+          </div>
+        </div>
+
         <div class="actions">
-          <button type="submit">校验并保存</button>
-          <span class="muted">保存前自动备份最近 10 份；写入采用原子替换。</span>
+          <button type="submit" name="action" value="save">校验并保存</button>
+          <button class="secondary" type="submit" name="action" value="test_connection">测试连接</button>
+          <button class="secondary" type="submit" name="action" value="dry_run">Dry Run</button>
+          <button class="secondary" type="submit" name="action" value="run_job_auto">立即执行 auto.py</button>
+          <button class="secondary" type="submit" name="action" value="run_job_crawl">立即执行 crawl.py</button>
+          <button class="secondary" type="submit" name="action" value="run_job_recheck">立即复测</button>
+          <button class="secondary" type="submit" name="action" value="run_job_stats">立即统计</button>
+          <span class="muted">保存前自动备份最近 10 份；测试连接、Dry Run 和立即执行都不会覆盖现有配置。</span>
         </div>
       </form>
     </section>
@@ -74,14 +339,164 @@
     <footer>管理网页默认仅绑定到本机 127.0.0.1。远程管理建议使用 SSH 隧道或 VPN。</footer>
   </main>
   <script>
-    document.getElementById("format-json").addEventListener("click", function () {
-      const field = document.getElementById("config-json");
-      try {
-        field.value = JSON.stringify(JSON.parse(field.value), null, 2);
-      } catch (error) {
-        alert("JSON 格式无效：" + error.message);
+    (function () {
+      const textarea = document.getElementById("cms_apis");
+      const input = document.getElementById("cms_api_custom");
+      const addBtn = document.getElementById("addCmsApiButton");
+      const clearBtn = document.getElementById("clearCmsApiButton");
+      const tags = document.getElementById("cmsApiTags");
+      const previewBox = document.getElementById("cmsPreview");
+      const formatBtn = document.getElementById("format-json");
+      const csrfToken = "{{ csrf_token() }}";
+
+      function parseCmsApis() {
+        const raw = (textarea.value || "").trim();
+        if (!raw) {
+          return [];
+        }
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            return parsed.filter((item) => typeof item === "string" && item.trim());
+          }
+          if (typeof parsed === "string" && parsed.trim()) {
+            return [parsed.trim()];
+          }
+        } catch (error) {
+          // 兼容旧值为逗号分隔文本。
+        }
+        return raw
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
       }
-    });
+
+      function writeCmsApis(values) {
+        const unique = Array.from(new Set(values.map((item) => item.trim()).filter(Boolean)));
+        textarea.value = JSON.stringify(unique, null, 2);
+        renderCmsApiTags();
+      }
+
+      function renderCmsApiTags() {
+        const values = parseCmsApis();
+        tags.innerHTML = "";
+        values.forEach((value) => {
+          const chip = document.createElement("span");
+          chip.className = "tag";
+          chip.textContent = value;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "×";
+          remove.setAttribute("aria-label", "移除 " + value);
+          remove.addEventListener("click", function () {
+            writeCmsApis(parseCmsApis().filter((item) => item !== value));
+            triggerPreview();
+          });
+          chip.appendChild(remove);
+          tags.appendChild(chip);
+        });
+      }
+
+      function updatePreview(message, sources) {
+        if (!previewBox) return;
+        if (!message && (!sources || !sources.length)) {
+          previewBox.textContent = "等待生成预览…";
+          return;
+        }
+        const lines = [];
+        if (message) lines.push(message);
+        if (sources && sources.length) {
+          lines.push("源分类：");
+          sources.forEach((source) => {
+            const types = source.types ? Object.entries(source.types).map(([id, kind]) => `${id}:${kind}`).join(", ") : "无";
+            lines.push(`- ${source.name || source.api || "未知"}: ${types}`);
+          });
+        }
+        previewBox.textContent = lines.join("\n");
+      }
+
+      function triggerPreview() {
+        if (!textarea || !previewBox) return;
+        const values = parseCmsApis();
+        if (!values.length) {
+          updatePreview("未配置 CMS API，预览为空。", []);
+          return;
+        }
+        previewBox.textContent = "正在生成预览…";
+        const form = new URLSearchParams();
+        form.append("csrf_token", csrfToken);
+        form.append("cms_apis", JSON.stringify(values));
+        fetch("{{ url_for('generate_sources_api') }}", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+          body: form.toString(),
+          credentials: "same-origin",
+        })
+          .then((response) => response.json().then((data) => ({ status: response.status, data })))
+          .then(({ status, data }) => {
+            if (status >= 400) {
+              updatePreview(data.error || "生成预览失败。", []);
+              return;
+            }
+            updatePreview(data.message || "已生成预览。", data.sources || []);
+          })
+          .catch(() => {
+            updatePreview("生成预览失败，请稍后再试。", []);
+          });
+      }
+
+      if (addBtn) {
+        addBtn.addEventListener("click", function () {
+          const value = (input.value || "").trim();
+          if (!value) {
+            input.focus();
+            return;
+          }
+          writeCmsApis(parseCmsApis().concat([value]));
+          input.value = "";
+          triggerPreview();
+        });
+      }
+
+      if (clearBtn) {
+        clearBtn.addEventListener("click", function () {
+          textarea.value = "[]";
+          renderCmsApiTags();
+          triggerPreview();
+        });
+      }
+
+      if (input) {
+        input.addEventListener("keydown", function (event) {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            if (addBtn) addBtn.click();
+          }
+        });
+      }
+
+      if (textarea) {
+        textarea.addEventListener("input", function () {
+          renderCmsApiTags();
+          triggerPreview();
+        });
+      }
+
+      if (formatBtn) {
+        formatBtn.addEventListener("click", function () {
+          const field = document.getElementById("config-json");
+          if (!field) return;
+          try {
+            field.value = JSON.stringify(JSON.parse(field.value), null, 2);
+          } catch (error) {
+            alert("JSON 格式无效：" + error.message);
+          }
+        });
+      }
+
+      renderCmsApiTags();
+      triggerPreview();
+    })();
   </script>
 </body>
 </html>

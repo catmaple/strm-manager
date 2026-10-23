@@ -9,7 +9,7 @@
 | Jellyfin | 媒体库及客户端播放服务 | `http://服务器IP:8096` |
 | STRM Manager | 配置网页、脚本和定时任务 | 默认监听 `0.0.0.0:8080`，可通过服务器 IP 访问 |
 
-配置、Redis 数据和 Jellyfin 数据保存在部署目录的 `data/` 中，不打包进镜像。STRM 媒体文件保存在宿主机的 `/media/movies` 和 `/media/shows`，与应用数据分开存放；更新容器镜像不会删除这些数据。
+配置、Redis 数据和 Jellyfin 数据保存在部署目录的 `data/` 中，不打包进镜像。STRM 媒体文件不保存在项目目录 `data/media/` 中；容器脚本仍使用容器内路径 `/media/movies` 和 `/media/tv`，并分别映射到宿主机 `/media/movies` 和 `/media/shows`。这样可避免镜像更新时丢失真实媒体目录，并与原始 STRM 目录布局兼容。
 
 ## 1. 准备 Linux 主机
 
@@ -97,6 +97,12 @@ mkdir -p \
 chown -R 999:999 data/redis
 chown -R 1000:1000 data/jellyfin/config data/jellyfin/cache
 ```
+
+说明：
+
+- `data/` 仅存放应用配置、日志、Redis 数据和 Jellyfin 数据。
+- `STRM` 生成的 `.strm` 文件不放在项目目录里，而放在宿主机 `/media/movies` 和 `/media/shows`。
+- 容器内脚本仍按原始设计使用 `/media/movies` 和 `/media/tv`，Compose 会把它们映射到宿主机对应目录。
 
 如果所用镜像版本的运行 UID 不同，请按镜像文档调整对应目录所有者。`/media/movies` 和 `/media/shows` 必须允许 STRM Manager 写入，并允许 Jellyfin 读取。当前管理容器以 root 身份运行，同时移除了 Linux capabilities，以兼容既有 STRM 写入目录权限。
 
@@ -315,7 +321,7 @@ docker compose exec strm-manager python /opt/m3u/crawl.py --types
 
 `crawl.py --types` 应列出已配置源的分类。没有配置 `crawl.sources` 或源接口无法访问时，先回管理网页修正配置，不要开始大批量抓取。
 
-容器内脚本继续使用 `/media/movies` 和 `/media/tv`；Compose 分别将这两个路径映射到宿主机 `/media/movies` 和 `/media/shows`。生成的 STRM 因此会出现在宿主机的 `/media/movies`、`/media/shows`，而 Jellyfin 媒体库路径仍填写容器内路径。
+重点：容器内脚本仍然使用 `/media/movies` 和 `/media/tv`，但它们分别映射到宿主机的 `/media/movies` 和 `/media/shows`。因此最终生成的 STRM 永远在宿主机 `/media/movies` 和 `/media/shows`，而不是项目目录 `data/media/`；Jellyfin 媒体库仍填写容器内路径 `/media/movies` 和 `/media/tv`。
 
 ## 8. 验证 STRM 入库与播放
 

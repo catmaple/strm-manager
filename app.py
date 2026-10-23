@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import signal
 import socket
@@ -11,6 +12,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -47,8 +49,35 @@ app.config.update(
 )
 
 SECRET_KEYS = {"password", "token", "cookie", "api_key"}
-EXPECTED_OBJECTS = {"login", "jellyfin", "telegram", "recheck", "crawl", "decotv"}
+SECRET_MASK = "********"
+EXPECTED_OBJECTS = {"login", "jellyfin", "telegram", "recheck", "crawl", "decotv", "scheduler"}
 EXPECTED_LISTS = {"list_urls", "cms_apis"}
+CMS_API_PRESETS = [
+    "http://hongniuzy2.com/api.php/provide/vod/from/hnm3u8",
+    "http://cj.lziapi.com/api.php/provide/vod/from/lzm3u8",
+    "http://slapibf.com/api.php/provide/vod",
+    "http://sdzyapi.com/api.php/provide/vod/from/sdm3u8",
+    "http://jyzyapi.com/provide/vod/from/jinyingm3u8",
+    "http://api.guangsuapi.com/api.php/provide/vod/from/gsm3u8",
+    "http://aosikazy.com/api.php/provide/vod",
+    "http://api.ukuapi.com/api.php/provide/vod",
+    "http://m3u8.apiyhzy.com/api.php/provide/vod",
+    "http://lovedan.net/api.php/provide/vod",
+    "https://360zy.com/api.php/provide/vod/",
+    "https://api.niuniuzy.me/api.php/provide/vod/",
+    "https://cj.yayazy.net/api.php/provide/vod/",
+    "https://hhzyapi.com/api.php/provide/vod",
+    "https://jszyapi.com/api.php/provide/vod",
+    "https://suoniapi.com/api.php/provide/vod/",
+    "https://ikunzyapi.com/api.php/provide/vod/",
+    "https://bfzyapi.com/api.php/provide/vod/",
+    "https://www.huyaapi.com/api.php/provide/vod/",
+    "https://api.wujinapi.com/api.php/provide/vod/",
+    "https://subocaiji.com/api.php/provide/vod/",
+    "https://caiji.moduapi.cc/api.php/provide/vod/",
+    "http://zuidazy.me/api.php/provide/vod/",
+    "https://api.xinlangapi.com/xinlangapi.php/provide/vod/",
+]
 NUMBER_FIELDS = {
     "max_new_per_run": (0, 100000),
     "max_pages": (0, 100000),
@@ -197,6 +226,26 @@ def validate_config(config):
                 isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0
             ):
                 raise ValueError(f"recheck.{key} 必须是非负数字")
+    if "scheduler" in config and isinstance(config["scheduler"], dict):
+        scheduler = config["scheduler"]
+        if "enabled" in scheduler and not isinstance(scheduler["enabled"], bool):
+            raise ValueError("scheduler.enabled 必须是 true 或 false")
+        for job_name in ("crawl", "recheck", "stats"):
+            job = scheduler.get(job_name)
+            if job is None:
+                continue
+            if not isinstance(job, dict):
+                raise ValueError(f"scheduler.{job_name} 必须是对象")
+            if "enabled" in job and not isinstance(job["enabled"], bool):
+                raise ValueError(f"scheduler.{job_name}.enabled 必须是 true 或 false")
+            if "script" in job and job["script"] not in {"auto", "crawl"}:
+                raise ValueError(f"scheduler.{job_name}.script 只能是 auto 或 crawl")
+            if "hour" in job and (not isinstance(job["hour"], int) or not 0 <= job["hour"] <= 23):
+                raise ValueError(f"scheduler.{job_name}.hour 必须是 0 到 23 的整数")
+            if "minute" in job and (not isinstance(job["minute"], int) or not 0 <= job["minute"] <= 59):
+                raise ValueError(f"scheduler.{job_name}.minute 必须是 0 到 59 的整数")
+            if "weekday" in job and (not isinstance(job["weekday"], int) or not 0 <= job["weekday"] <= 6):
+                raise ValueError(f"scheduler.{job_name}.weekday 必须是 0 到 6 的整数")
     return config
 
 
@@ -249,6 +298,272 @@ def require_login():
     return None
 
 
+def parse_form_int(value, minimum=None, maximum=None):
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    if text == "":
+        return None
+    try:
+        parsed = float(text)
+    except ValueError as error:
+        raise ValueError(f"无效数字: {value}") from error
+    if minimum is not None and parsed < minimum:
+        raise ValueError(f"值不能小于 {minimum}")
+    if maximum is not None and parsed > maximum:
+        raise ValueError(f"值不能大于 {maximum}")
+    if parsed.is_integer():
+        return int(parsed)
+    return parsed
+
+
+def parse_form_json_list(value):
+    if value is None:
+        return []
+    cleaned = value.strip()
+    if not cleaned:
+        return []
+    if cleaned.startswith("[") or cleaned.startswith("{"):
+        parsed = json.loads(cleaned)
+        return parsed if isinstance(parsed, list) else [parsed]
+    return [part.strip() for part in cleaned.split(",") if part.strip()]
+
+
+def parse_form_chat_ids(value):
+    if value is None:
+        return []
+    cleaned = value.strip()
+    if not cleaned:
+        return []
+    parsed = []
+    for part in re.split(r"[\s,]+", cleaned):
+        if not part:
+            continue
+        try:
+            parsed.append(int(part))
+        except ValueError:
+            parsed.append(part)
+    return parsed
+
+
+def parse_form_secret(form, key):
+    value = form.get(key, "")
+    return "" if value == SECRET_MASK else value
+
+
+def infer_source_kind(type_name):
+    text = str(type_name or "").lower()
+    if not text:
+        return "movie"
+    movie_tokens = ("电影", "movie", "movies", "片", "影片", "动作", "剧情", "喜剧", "爱情", "科幻", "恐怖", "战争", "犯罪")
+    tv_tokens = ("剧", "tv", "连续剧", "电视剧", "综艺", "动漫", "纪录片", "网络剧", "韩剧", "美剧", "日剧", "国产剧", "港剧")
+    if any(token in text for token in movie_tokens):
+        return "movie"
+    if any(token in text for token in tv_tokens):
+        return "tv"
+    if any(token in text for token in ("综艺", "动漫", "纪录", "演唱会")):
+        return "tv"
+    return "movie"
+
+
+def extract_class_entries(payload):
+    if isinstance(payload, dict):
+        for key in ("class", "classes", "types", "category", "categories", "list"):
+            candidate = payload.get(key)
+            if isinstance(candidate, list):
+                return candidate
+            if isinstance(candidate, dict):
+                nested = candidate.get("list")
+                if isinstance(nested, list):
+                    return nested
+                nested_values = list(candidate.values())
+                if nested_values and isinstance(nested_values[0], list):
+                    return nested_values[0]
+        if isinstance(payload.get("data"), list):
+            return payload["data"]
+        if isinstance(payload.get("result"), list):
+            return payload["result"]
+        if isinstance(payload.get("items"), list):
+            return payload["items"]
+    elif isinstance(payload, list):
+        return payload
+    return []
+
+
+def discover_sources_from_cms_apis(api_urls):
+    results = []
+    for raw in api_urls or []:
+        url = str(raw or "").strip()
+        if not url:
+            continue
+
+        candidates = []
+        base = url.rstrip("/")
+        normalized = base
+        if "ac=" not in base:
+            normalized = base + ("?ac=list" if "?" in base else "?ac=list")
+        if normalized not in candidates:
+            candidates.append(normalized)
+        if not base.endswith("/api.php/provide/vod") and "/provide/" in base:
+            candidates.append(base + ("?ac=list" if "?" not in base else "&ac=list"))
+        if not base.endswith("/"):
+            candidates.append(base + "/?ac=list")
+        else:
+            candidates.append(base + "?ac=list")
+
+        seen_urls = set()
+        for candidate in candidates:
+            if candidate in seen_urls:
+                continue
+            seen_urls.add(candidate)
+            try:
+                req = urllib.request.Request(candidate, headers={"User-Agent": "STRM-Manager/1.0"})
+                with urllib.request.urlopen(req, timeout=15) as response:
+                    payload = json.load(response)
+            except (OSError, urllib.error.URLError, ValueError, json.JSONDecodeError):
+                continue
+
+            classes = extract_class_entries(payload)
+            types = {}
+            for index, item in enumerate(classes):
+                if not isinstance(item, dict):
+                    continue
+                type_id = item.get("type_id")
+                if type_id is None:
+                    for key in ("id", "type", "tid"):
+                        if key in item:
+                            type_id = item.get(key)
+                            break
+                if type_id is None:
+                    type_id = index
+                name = item.get("type_name") or item.get("name") or item.get("cate_name") or item.get("typename") or item.get("title")
+                if name is None:
+                    continue
+                types[str(type_id)] = infer_source_kind(name)
+            if not types:
+                continue
+            host = urllib.parse.urlparse(url).netloc or "cms"
+            results.append({
+                "name": host,
+                "api": base,
+                "types": types,
+            })
+            break
+    return results
+
+
+def merge_config(base, overlay):
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        result = dict(base)
+        for key, value in overlay.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = merge_config(result[key], value)
+            else:
+                result[key] = value
+        return result
+    if isinstance(base, list) and isinstance(overlay, list):
+        return overlay
+    return overlay if overlay is not None else base
+
+
+def config_from_form(form):
+    config = {
+        "list_urls": parse_form_json_list(form.get("list_urls", "")),
+        "cookie": parse_form_secret(form, "cookie"),
+        "decotv": {
+            "url": form.get("decotv_url", ""),
+        },
+        "login": {
+            "url": form.get("login_url", ""),
+            "username": form.get("login_username", ""),
+            "password": parse_form_secret(form, "login_password"),
+        },
+        "cms_apis": parse_form_json_list(form.get("cms_apis", "")),
+        "max_new_per_run": parse_form_int(form.get("max_new_per_run", ""), 0, 100000),
+        "max_pages": parse_form_int(form.get("max_pages", ""), 0, 100000),
+        "max_lookups_per_run": parse_form_int(form.get("max_lookups_per_run", ""), 0, 1000000),
+        "retry_miss_days": parse_form_int(form.get("retry_miss_days", ""), 0, 36500),
+        "jellyfin": {
+            "url": form.get("jellyfin_url", ""),
+            "api_key": parse_form_secret(form, "jellyfin_api_key"),
+        },
+        "telegram": {
+            "token": parse_form_secret(form, "telegram_token"),
+            "allowed_chat_ids": parse_form_chat_ids(form.get("telegram_allowed_chat_ids", "")),
+        },
+        "recheck": {
+            "min_headroom": parse_form_int(form.get("recheck_min_headroom", ""), 0, 1000),
+            "switch_gain": parse_form_int(form.get("recheck_switch_gain", ""), 0, 1000),
+            "interval_days": parse_form_int(form.get("recheck_interval_days", ""), 0, 3650),
+            "max_per_run": parse_form_int(form.get("recheck_max_per_run", ""), 0, 100000),
+        },
+        "crawl": {
+            "via_decotv": form.get("crawl_via_decotv") == "on",
+            "sources": parse_form_json_list(form.get("crawl_sources", "")),
+            "max_age_years": parse_form_int(form.get("crawl_max_age_years", ""), 0, 1000),
+            "min_year": parse_form_int(form.get("crawl_min_year", ""), 0, 10000),
+            "skip_unknown_year": form.get("crawl_skip_unknown_year") == "on",
+            "min_score": parse_form_int(form.get("crawl_min_score", ""), 0, 100),
+            "score_field": form.get("crawl_score_field", "douban") or "douban",
+            "skip_remarks": parse_form_json_list(form.get("crawl_skip_remarks", "")),
+            "max_new_per_run": parse_form_int(form.get("crawl_max_new_per_run", ""), 0, 100000),
+            "max_pages_per_run": parse_form_int(form.get("crawl_max_pages_per_run", ""), 0, 100000),
+            "per_type_new": parse_form_int(form.get("crawl_per_type_new", ""), 0, 100000),
+            "per_type_pages": parse_form_int(form.get("crawl_per_type_pages", ""), 0, 100000),
+            "backfill_max_pages": parse_form_int(form.get("crawl_backfill_max_pages", ""), 0, 100000),
+            "update_pages": parse_form_int(form.get("crawl_update_pages", ""), 0, 100000),
+            "max_eps": parse_form_int(form.get("crawl_max_eps", ""), 0, 1000),
+            "delay": parse_form_int(form.get("crawl_delay", ""), 0, 10000),
+        },
+        "scheduler": {
+            "enabled": form.get("scheduler_enabled") == "on",
+            "crawl": {
+                "enabled": form.get("scheduler_crawl_enabled") == "on",
+                "script": form.get("scheduler_crawl_script", "auto") or "auto",
+                "hour": parse_form_int(form.get("scheduler_crawl_hour", ""), 0, 23),
+                "minute": parse_form_int(form.get("scheduler_crawl_minute", ""), 0, 59),
+            },
+            "recheck": {
+                "enabled": form.get("scheduler_recheck_enabled") == "on",
+                "hour": parse_form_int(form.get("scheduler_recheck_hour", ""), 0, 23),
+                "minute": parse_form_int(form.get("scheduler_recheck_minute", ""), 0, 59),
+            },
+            "stats": {
+                "enabled": form.get("scheduler_stats_enabled") == "on",
+                "weekday": parse_form_int(form.get("scheduler_stats_weekday", ""), 0, 6),
+                "hour": parse_form_int(form.get("scheduler_stats_hour", ""), 0, 23),
+                "minute": parse_form_int(form.get("scheduler_stats_minute", ""), 0, 59),
+            },
+        },
+    }
+    if config["recheck"]["min_headroom"] is None:
+        config["recheck"].pop("min_headroom")
+    if config["recheck"]["switch_gain"] is None:
+        config["recheck"].pop("switch_gain")
+    if config["recheck"]["interval_days"] is None:
+        config["recheck"].pop("interval_days")
+    if config["recheck"]["max_per_run"] is None:
+        config["recheck"].pop("max_per_run")
+    for key in list(config.keys()):
+        if key in {"max_new_per_run", "max_pages", "max_lookups_per_run", "retry_miss_days"} and config[key] is None:
+            config.pop(key)
+    for key in list(config["crawl"].keys()):
+        if key in {"via_decotv", "skip_unknown_year"}:
+            continue
+        if config["crawl"][key] is None:
+            config["crawl"].pop(key)
+    scheduler = config.get("scheduler")
+    if isinstance(scheduler, dict):
+        for job_name in ("crawl", "recheck", "stats"):
+            if job_name in scheduler and isinstance(scheduler[job_name], dict):
+                for key in list(scheduler[job_name].keys()):
+                    if scheduler[job_name][key] is None:
+                        scheduler[job_name].pop(key)
+        if not scheduler.get("crawl") and not scheduler.get("recheck") and not scheduler.get("stats"):
+            config.pop("scheduler")
+    return config
+
+
 def http_status(url):
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "STRM-Manager/1.0"})
@@ -256,6 +571,42 @@ def http_status(url):
             return f"正常（HTTP {response.status}）"
     except (OSError, urllib.error.URLError, ValueError) as error:
         return f"不可用：{error}"
+
+
+def test_service_connections(config):
+    results = []
+    decotv_url = (config.get("decotv", {}).get("url") or "http://decotv:3000").rstrip("/")
+    jellyfin_url = (config.get("jellyfin", {}).get("url") or "http://jellyfin:8096").rstrip("/")
+    login = config.get("login") or {}
+    login_url = (login.get("url") or decotv_url).rstrip("/")
+    username = login.get("username", "")
+    password = login.get("password", "")
+
+    if decotv_url:
+        results.append(f"DecoTV：{http_status(decotv_url + '/')}" )
+    if login_url and username and password:
+        try:
+            payload = json.dumps({"username": username, "password": password}).encode("utf-8")
+            request = urllib.request.Request(
+                login_url,
+                data=payload,
+                headers={"Content-Type": "application/json", "User-Agent": "STRM-Manager/1.0"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                results.append(f"DecoTV 登录：正常（HTTP {response.status}）")
+        except (OSError, urllib.error.URLError, ValueError) as error:
+            results.append(f"DecoTV 登录：不可用：{error}")
+    if jellyfin_url:
+        results.append(f"Jellyfin：{http_status(jellyfin_url + '/health')}")
+    try:
+        with socket.create_connection(("decotv-redis", 6379), timeout=3) as conn:
+            conn.sendall(b"*1\r\n$4\r\nPING\r\n")
+            reply = conn.recv(64)
+        results.append("Redis：正常（PONG）" if b"PONG" in reply else "Redis：不可用：Redis 未返回 PONG")
+    except OSError as error:
+        results.append(f"Redis：不可用：{error}")
+    return "\n".join(results)
 
 
 def services_status(config):
@@ -281,6 +632,37 @@ def tail_log(path, limit=60):
     except FileNotFoundError:
         return "暂无日志。"
     return redact("\n".join(lines[-limit:]))
+
+
+def run_dry_run(config):
+    target = Path("/opt/m3u/config.json")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    original = None
+    try:
+        if target.exists():
+            original = target.read_text(encoding="utf-8")
+        target.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, "/opt/m3u/crawl.py", "--dry"],
+            cwd="/opt/m3u",
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        output = (result.stdout or "") + ("\n" + (result.stderr or "") if result.stderr else "")
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        summary = "\n".join(lines[-20:]) or "Dry Run 已执行，但没有输出。"
+        return f"Dry Run 完成（退出码 {result.returncode}）\n{summary}"
+    except FileNotFoundError:
+        return "Dry Run 失败：/opt/m3u/crawl.py 不存在，无法执行模拟抓取。"
+    except subprocess.TimeoutExpired:
+        return "Dry Run 失败：模拟抓取超时（120 秒）。"
+    finally:
+        if original is not None:
+            target.write_text(original, encoding="utf-8")
+        elif target.exists():
+            target.unlink()
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -313,17 +695,76 @@ def logout():
     return redirect(url_for("login"))
 
 
+@app.route("/api/generate_sources", methods=["POST"])
+def generate_sources_api():
+    if not session.get("authenticated"):
+        return {"error": "未登录"}, 401
+    sent = request.form.get("csrf_token", "")
+    expected = session.get("csrf_token", "")
+    if not sent or not expected or not hmac.compare_digest(sent, expected):
+        return {"error": "CSRF 校验失败，请刷新页面重试。"}, 400
+    api_urls = parse_form_json_list(request.form.get("cms_apis", ""))
+    generated = discover_sources_from_cms_apis(api_urls)
+    return {
+        "count": len(generated),
+        "message": (
+            f"已生成 {len(generated)} 个源分类。"
+            if generated
+            else "未从 CMS 接口查询到有效分类，请检查 cms_apis 或接口返回格式。"
+        ),
+        "sources": generated,
+    }
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
+        action = request.form.get("action", "save")
         try:
-            submitted = json.loads(request.form.get("config_json", ""))
-            validate_config(submitted)
             current = load_config()
-            updated = restore_blank_secrets(submitted, current)
+            raw_config = request.form.get("config_json")
+            if raw_config is not None and raw_config.strip():
+                submitted = json.loads(raw_config)
+            else:
+                submitted = config_from_form(request.form)
+            merged = merge_config(current, submitted)
+            validate_config(merged)
+            updated = restore_blank_secrets(merged, current)
             validate_config(updated)
-            save_config(updated)
-            flash("配置已校验并保存。定时任务和脚本下次运行时会读取新配置；Telegram 机器人会自动重启。", "success")
+
+            if action == "test_connection":
+                message = test_service_connections(updated)
+                session["last_action_result"] = message
+                flash(message, "error" if "不可用：" in message or "失败" in message else "success")
+            elif action == "dry_run":
+                message = run_dry_run(updated)
+                session["last_action_result"] = message
+                flash(message, "error" if "失败" in message else "success")
+            elif action == "generate_sources":
+                generated = discover_sources_from_cms_apis(submitted.get("cms_apis", []))
+                updated.setdefault("crawl", {})
+                updated["crawl"]["sources"] = generated
+                message = (
+                    f"已生成 {len(generated)} 个源分类。"
+                    if generated
+                    else "未从 CMS 接口查询到有效分类，请检查 cms_apis 或接口返回格式。"
+                )
+                session["last_action_result"] = message
+                flash(message, "success" if generated else "error")
+            elif action.startswith("run_job_"):
+                job_name = action.replace("run_job_", "")
+                message = run_manual_job(job_name)
+                session["last_action_result"] = message
+                flash(message, "success")
+            else:
+                if not updated.get("crawl", {}).get("sources") and submitted.get("cms_apis"):
+                    generated = discover_sources_from_cms_apis(submitted.get("cms_apis", []))
+                    if generated:
+                        updated.setdefault("crawl", {})
+                        updated["crawl"]["sources"] = generated
+                save_config(updated)
+                session["last_action_result"] = "配置已校验并保存。定时任务和脚本下次运行时会读取新配置；Telegram 机器人会自动重启。"
+                flash("配置已校验并保存。定时任务和脚本下次运行时会读取新配置；Telegram 机器人会自动重启。", "success")
         except (json.JSONDecodeError, ValueError) as error:
             flash(f"配置未保存：{error}", "error")
         except OSError as error:
@@ -334,21 +775,22 @@ def index():
     config_error = None
     try:
         config = load_config()
-        editor_value = json.dumps(hide_secrets(config), ensure_ascii=False, indent=2)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         config = {}
-        editor_value = "{}"
         config_error = str(error)
     with STATE_LOCK:
         runtime = dict(RUNTIME)
+    last_action_result = session.pop("last_action_result", "")
     return render_template(
         "index.html",
-        config_json=editor_value,
+        config=config,
         config_error=config_error,
         services=services_status(config) if not config_error else {},
         runtime=runtime,
         task_log=tail_log(LOG_DIR / "scheduler.log"),
         timezone=os.environ.get("TZ", "系统默认"),
+        last_action_result=last_action_result,
+        cms_api_presets=CMS_API_PRESETS,
     )
 
 
@@ -404,21 +846,73 @@ def scheduled_job(name, script, timeout):
         JOB_LOCK.release()
 
 
+def run_manual_job(job_name):
+    jobs = {
+        "auto": ("默认分类抓取", "auto.py", 3 * 60 * 60),
+        "crawl": ("指定源抓取", "crawl.py", 3 * 60 * 60),
+        "recheck": ("线路复测", "recheck.py", 2 * 60 * 60),
+        "stats": ("周统计", "stats.py", 2 * 60 * 60),
+    }
+    if job_name not in jobs:
+        raise ValueError(f"不支持的任务: {job_name}")
+    name, script, timeout = jobs[job_name]
+    threading.Thread(target=scheduled_job, args=(name, script, timeout), daemon=True).start()
+    return f"已启动任务：{name}"
+
+
 def scheduler_loop():
     started = {}
     while not STOP_EVENT.wait(10):
-        now = datetime.now()
-        if now.hour == 2 and now.minute == 0:
-            key, job = now.strftime("%Y-%m-%d") + "-crawl", ("批量抓取", "crawl.py", 3 * 60 * 60)
-        elif now.hour == 4 and now.minute == 30:
-            key, job = now.strftime("%Y-%m-%d") + "-recheck", ("线路复测", "recheck.py", 2 * 60 * 60)
-        elif now.weekday() == 6 and now.hour == 9 and now.minute == 0:
-            key, job = now.strftime("%Y-%m-%d") + "-stats", ("周统计", "stats.py", 2 * 60 * 60)
-        else:
+        try:
+            config = load_config()
+            scheduler_cfg = config.get("scheduler") or {}
+            enabled = scheduler_cfg.get("enabled", True)
+        except (OSError, ValueError, json.JSONDecodeError):
+            enabled = False
+        if not enabled:
             continue
-        if key not in started:
-            started[key] = True
-            threading.Thread(target=scheduled_job, args=job, daemon=True).start()
+        now = datetime.now()
+        jobs = {
+            "auto": ("默认分类抓取", "auto.py", 3 * 60 * 60),
+            "crawl": ("指定源抓取", "crawl.py", 3 * 60 * 60),
+            "recheck": ("线路复测", "recheck.py", 2 * 60 * 60),
+            "stats": ("周统计", "stats.py", 2 * 60 * 60),
+        }
+        for job_name, job in jobs.items():
+            if job_name == "auto" or job_name == "crawl":
+                settings = (scheduler_cfg.get("crawl") or {})
+                if settings.get("enabled") is False:
+                    continue
+                script_name = (settings.get("script") or "auto").lower()
+                if job_name == "auto" and script_name != "auto":
+                    continue
+                if job_name == "crawl" and script_name != "crawl":
+                    continue
+                hour = settings.get("hour")
+                minute = settings.get("minute")
+                if hour is None or minute is None:
+                    hour, minute = 2, 0
+            else:
+                settings = (scheduler_cfg.get(job_name) or {})
+                if settings.get("enabled") is False:
+                    continue
+                hour = settings.get("hour")
+                minute = settings.get("minute")
+                weekday = settings.get("weekday")
+                if hour is None or minute is None:
+                    if job_name == "recheck":
+                        hour, minute = 4, 30
+                    elif job_name == "stats":
+                        hour, minute = 9, 0
+                if job_name == "stats" and weekday is not None and now.weekday() != weekday:
+                    continue
+            if now.hour == hour and now.minute == minute:
+                key = now.strftime("%Y-%m-%d") + f"-{job_name}"
+                if key in started:
+                    continue
+                started[key] = True
+                threading.Thread(target=scheduled_job, args=job, daemon=True).start()
+                break
 
 
 def stop_bot():
