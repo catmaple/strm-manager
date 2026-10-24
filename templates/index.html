@@ -454,6 +454,17 @@
           });
       }
 
+      function showSourceLoadFailure(message) {
+        if (sourceWarning) sourceWarning.hidden = false;
+        if (sourceStatus) sourceStatus.textContent = window.strmTranslate(message);
+        sourceSelect.replaceChildren();
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = window.strmTranslate("无法读取 DecoTV 视频源");
+        sourceSelect.appendChild(option);
+        sourceSelect.disabled = true;
+      }
+
       function loadDecoTVSources() {
         if (!sourceSelect) return;
         if (saveButton) saveButton.disabled = true;
@@ -461,17 +472,21 @@
         if (sourceStatus) {
           sourceStatus.textContent = window.strmTranslate("正在从 DecoTV 同步视频源…");
         }
-        fetch("{{ url_for('decotv_sources_api') }}", { credentials: "same-origin" })
-          .then((response) => response.json().then((data) => ({ status: response.status, data })))
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+        fetch("{{ url_for('decotv_sources_api') }}", {
+          credentials: "same-origin",
+          cache: "no-store",
+          signal: controller.signal,
+        })
+          .then((response) => response.json().catch(() => ({})).then((data) => ({ status: response.status, data })))
           .then(({ status, data }) => {
             if (status >= 400) {
-              if (sourceWarning) sourceWarning.hidden = false;
-              if (sourceStatus) sourceStatus.textContent = window.strmTranslate(data.message || "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
-              sourceSelect.replaceChildren();
-              const option = document.createElement("option");
-              option.value = "";
-              option.textContent = window.strmTranslate("无法读取 DecoTV 视频源");
-              sourceSelect.appendChild(option);
+              showSourceLoadFailure(data.message || "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
+              return;
+            }
+            if (!Array.isArray(data.sources)) {
+              showSourceLoadFailure("无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
               return;
             }
             const previouslySelected = parseCmsApis()[0];
@@ -497,12 +512,10 @@
             return triggerPreview();
           })
           .catch(() => {
-            if (sourceWarning) sourceWarning.hidden = false;
-            if (sourceStatus) {
-              sourceStatus.textContent = window.strmTranslate("无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
-            }
+            showSourceLoadFailure("无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
           })
           .finally(() => {
+            window.clearTimeout(timeoutId);
             if (saveButton) saveButton.disabled = false;
           });
       }
