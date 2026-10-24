@@ -635,6 +635,35 @@ class TelegramSearchTests(unittest.TestCase):
         self.assertIn("1920x1080 / 8.0Mbps", markup[0][0]["text"])
         self.assertTrue(markup[0][0]["callback_data"].startswith("editsrc:"))
 
+    def test_edit_options_mark_current_line(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            strm = Path(temporary) / "Example Movie.strm"
+            strm.write_text("https://two.example/movie.m3u8\n", encoding="utf-8")
+            item = {
+                "kind": "movie", "name": "Example Movie", "full": "Example Movie",
+                "year": "2024", "season": 1, "files": [str(strm)],
+            }
+            result = {
+                "name": "Example Movie", "full": "Example Movie", "season": 1,
+                "explicit": False, "year": "2024", "kind": "movie",
+                "lines": [
+                    {"label": "One", "eps": [("播放", "https://one.example/movie.m3u8")]},
+                    {"label": "Two", "eps": [("播放", "https://two.example/movie.m3u8")]},
+                ],
+            }
+            with patch.object(telegram_bot, "candidates", return_value=[result]), patch.object(
+                telegram_bot.probe, "rank",
+                side_effect=lambda lines, _log: [{**line, "_info": "x"} for line in lines],
+            ), patch.object(telegram_bot, "say") as mock_say:
+                telegram_bot.show_edit_sources(123, item)
+
+        markup = mock_say.call_args.args[2]
+        self.assertNotIn("当前", markup[0][0]["text"])
+        self.assertTrue(markup[1][0]["text"].startswith("✅当前"))
+
+    def test_edit_options_mark_current_line_tv_uses_first_episode(self):
+        self.assertEqual(telegram_bot._line_urls({"eps": [("1", "u1")], "series_eps": [("1", "u1"), ("2", "u2")]}), {"u1", "u2"})
+
     def test_add_flow_shows_measured_routes_and_adds_the_selected_route(self):
         candidate = {
             "name": "Example Movie",

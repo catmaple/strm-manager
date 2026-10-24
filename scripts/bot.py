@@ -501,6 +501,18 @@ def delete_item(item):
     return deleted
 
 
+def _read_strm_url(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def _line_urls(line):
+    return {url for _name, url in (line.get("series_eps") or line.get("eps") or [])}
+
+
 def show_edit_sources(chat, item):
     query = item["name"]
     if item["kind"] == "tv":
@@ -564,14 +576,28 @@ def show_edit_sources(chat, item):
         "lines": ranked,
         "token": token,
     }
+    current_url = _read_strm_url(item["files"][0]) if item.get("files") else ""
+    current_index = next(
+        (
+            index for index, line in enumerate(ranked[:20])
+            if current_url and current_url in _line_urls(line)
+        ),
+        None,
+    )
     buttons = [
         [{
-            "text": f"{line.get('_info', '')} · {line.get('label', '线路')}"[:60],
+            "text": (
+                ("✅当前 · " if index == current_index else "")
+                + f"{line.get('_info', '')} · {line.get('label', '线路')}"
+            )[:60],
             "callback_data": f"editsrc:{token}:{index}",
         }]
         for index, line in enumerate(ranked[:20])
     ]
-    say(chat, f"请选择要用于 {item_label(item)} 的播放线路：", buttons)
+    note = ""
+    if current_index is None:
+        note = "\n（当前使用的线路不在可用列表中，可能已失效或测速失败）"
+    say(chat, f"请选择要用于 {item_label(item)} 的播放线路：{note}", buttons)
     if skipped_incomplete:
         say(chat, f"另有 {skipped_incomplete} 条线路集数少于本地 {len(item['files'])} 集，已隐藏以免覆盖不完整。")
 
