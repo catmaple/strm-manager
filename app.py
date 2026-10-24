@@ -552,7 +552,6 @@ def config_from_form(form):
             "admin_username": form.get("decotv_admin_username", "").strip(),
             "admin_password": parse_form_secret(form, "decotv_admin_password"),
         },
-        "cms_apis": parse_form_json_list(form.get("cms_apis", "")),
         "max_new_per_run": parse_form_int(form.get("max_new_per_run", ""), 0, 100000),
         "max_pages": parse_form_int(form.get("max_pages", ""), 0, 100000),
         "max_lookups_per_run": parse_form_int(form.get("max_lookups_per_run", ""), 0, 1000000),
@@ -612,6 +611,8 @@ def config_from_form(form):
             },
         },
     }
+    if "cms_apis" in form:
+        config["cms_apis"] = parse_form_json_list(form.get("cms_apis", ""))
     if "list_urls" in form:
         config["list_urls"] = parse_form_json_list(form.get("list_urls", ""))
     if config["recheck"]["min_headroom"] is None:
@@ -871,11 +872,19 @@ def index():
                 session["last_action_result"] = message
                 flash(message, "success")
             else:
-                if not updated.get("crawl", {}).get("sources") and submitted.get("cms_apis"):
-                    generated = discover_sources_from_cms_apis(submitted.get("cms_apis", []))
+                cms_apis_changed = updated.get("cms_apis", []) != current.get("cms_apis", [])
+                if cms_apis_changed or (
+                    not updated.get("crawl", {}).get("sources")
+                    and updated.get("cms_apis")
+                ):
+                    generated = discover_sources_from_cms_apis(updated.get("cms_apis", []))
                     if generated:
                         updated.setdefault("crawl", {})
                         updated["crawl"]["sources"] = generated
+                    elif cms_apis_changed:
+                        raise ValueError(
+                            "视频源已切换，但无法读取新源分类；配置未保存，请检查视频源地址后重试。"
+                        )
                 save_config(updated)
                 session["last_action_result"] = "配置已校验并保存。定时任务和脚本下次运行时会读取新配置；Telegram 机器人会自动重启。"
                 flash("配置已校验并保存。定时任务和脚本下次运行时会读取新配置；Telegram 机器人会自动重启。", "success")

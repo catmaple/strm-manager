@@ -209,6 +209,80 @@ class ConfigWebTests(unittest.TestCase):
         self.assertEqual(saved["decotv"]["admin_username"], "deco-admin")
         self.assertEqual(saved["decotv"]["admin_password"], "new-admin-secret")
 
+    @patch.object(
+        manager,
+        "discover_sources_from_cms_apis",
+        return_value=[{
+            "name": "New Source",
+            "api": "https://new-source.example/api",
+            "types": {"1": "movie"},
+        }],
+    )
+    def test_save_changed_cms_api_refreshes_crawl_sources(self, mock_discover):
+        self.authenticate()
+        current = {
+            **self.initial,
+            "cms_apis": ["https://old-source.example/api"],
+            "crawl": {
+                "sources": [{
+                    "name": "Old Source",
+                    "api": "https://old-source.example/api",
+                    "types": {"1": "tv"},
+                }],
+            },
+        }
+        self.config_path.write_text(json.dumps(current), encoding="utf-8")
+        response = self.client.post(
+            "/",
+            data={
+                "csrf_token": "test-csrf",
+                "cms_apis": '["https://new-source.example/api"]',
+                "crawl_sources": json.dumps(current["crawl"]["sources"]),
+            },
+        )
+
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(saved["cms_apis"], ["https://new-source.example/api"])
+        self.assertEqual(
+            saved["crawl"]["sources"],
+            [{
+                "name": "New Source",
+                "api": "https://new-source.example/api",
+                "types": {"1": "movie"},
+            }],
+        )
+        mock_discover.assert_called_once_with(["https://new-source.example/api"])
+
+    @patch.object(manager, "discover_sources_from_cms_apis", return_value=[])
+    def test_save_changed_cms_api_without_categories_is_rejected(self, _mock_discover):
+        self.authenticate()
+        current = {
+            **self.initial,
+            "cms_apis": ["https://old-source.example/api"],
+            "crawl": {
+                "sources": [{
+                    "name": "Old Source",
+                    "api": "https://old-source.example/api",
+                    "types": {"1": "tv"},
+                }],
+            },
+        }
+        original = json.dumps(current)
+        self.config_path.write_text(original, encoding="utf-8")
+        response = self.client.post(
+            "/",
+            data={
+                "csrf_token": "test-csrf",
+                "cms_apis": '["https://new-source.example/api"]',
+                "crawl_sources": json.dumps(current["crawl"]["sources"]),
+            },
+        )
+
+        saved = self.config_path.read_text(encoding="utf-8")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(saved, original)
+
     def test_hidden_list_urls_are_preserved_by_form_submission(self):
         submitted = manager.config_from_form({})
         merged = manager.merge_config(self.initial, submitted)
