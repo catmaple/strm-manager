@@ -25,17 +25,30 @@ class TelegramSearchTests(unittest.TestCase):
     def tearDown(self):
         telegram_bot.cfg = self.original_config
 
+    def source_config(self, sources=None):
+        return {
+            "Config": {
+                "SourceConfig": sources or [{
+                    "name": "Example CMS",
+                    "api": "https://cms.example/api.php/provide/vod",
+                }]
+            }
+        }
+
+    def set_search_responses(self, mock_http_json, *responses):
+        mock_http_json.side_effect = [self.source_config(), *responses]
+
     @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
     @patch.object(telegram_bot, "http_json")
     def test_search_uses_decotv_proxy_and_admin_session(self, mock_http_json, _cookie):
-        mock_http_json.return_value = {
+        self.set_search_responses(mock_http_json, {
             "list": [{
                 "vod_name": "Example Movie",
                 "vod_year": "2024",
                 "vod_play_url": "线路一$https://media.example/movie.m3u8",
                 "vod_play_from": "线路一",
             }],
-        }
+        })
 
         results = telegram_bot.candidates("Example Movie")
 
@@ -52,10 +65,77 @@ class TelegramSearchTests(unittest.TestCase):
 
     @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
     @patch.object(telegram_bot, "http_json")
+    def test_search_removes_episode_suffix_from_query(
+        self, mock_http_json, _cookie
+    ):
+        self.set_search_responses(mock_http_json, {"list": []})
+
+        telegram_bot.candidates("Example Series 第2季 第3集")
+
+        request_url = mock_http_json.call_args.args[0]
+        target_url = urllib.parse.parse_qs(
+            urllib.parse.urlsplit(request_url).query
+        )["url"][0]
+        target_query = urllib.parse.parse_qs(urllib.parse.urlsplit(target_url).query)
+        self.assertEqual(target_query["wd"], ["Example Series"])
+
+    @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
+    @patch.object(telegram_bot, "http_json")
+    def test_search_uses_all_enabled_non_adult_decotv_sources(
+        self, mock_http_json, _cookie
+    ):
+        sources = [
+            {"name": "Source One", "api": "https://one.example/api.php/provide/vod"},
+            {"name": "Source Two", "api": "https://two.example/api.php/provide/vod"},
+            {
+                "name": "Disabled",
+                "api": "https://disabled.example/api.php/provide/vod",
+                "disabled": True,
+            },
+            {
+                "name": "Adult",
+                "api": "https://adult.example/api.php/provide/vod",
+                "is_adult": True,
+            },
+        ]
+        mock_http_json.side_effect = [
+            self.source_config(sources),
+            {"list": []},
+            {
+                "list": [{
+                    "vod_name": "Example Movie",
+                    "vod_year": "2024",
+                    "vod_play_url": "线路一$https://media.example/movie.m3u8",
+                    "vod_play_from": "线路一",
+                }]
+            },
+        ]
+
+        results = telegram_bot.candidates("Example Movie")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(mock_http_json.call_args_list), 3)
+        source_config_call = mock_http_json.call_args_list[0]
+        self.assertEqual(
+            source_config_call.args[0],
+            "http://decotv:3000/api/admin/config",
+        )
+        self.assertEqual(source_config_call.args[1], "auth=session-cookie")
+        cms_targets = []
+        for call in mock_http_json.call_args_list[1:]:
+            proxy_url = urllib.parse.urlsplit(call.args[0])
+            target = urllib.parse.parse_qs(proxy_url.query)["url"][0]
+            cms_targets.append(target)
+        self.assertEqual(len(cms_targets), 2)
+        self.assertIn("https://one.example/api.php/provide/vod", cms_targets[0])
+        self.assertIn("https://two.example/api.php/provide/vod", cms_targets[1])
+
+    @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
+    @patch.object(telegram_bot, "http_json")
     def test_search_recognizes_unknown_category_with_multiple_episodes(
         self, mock_http_json, _cookie
     ):
-        mock_http_json.return_value = {
+        self.set_search_responses(mock_http_json, {
             "list": [{
                 "vod_name": "Example Series",
                 "vod_year": "2024",
@@ -66,7 +146,7 @@ class TelegramSearchTests(unittest.TestCase):
                 ),
                 "vod_play_from": "线路一",
             }],
-        }
+        })
 
         results = telegram_bot.candidates("Example Series")
 
@@ -93,7 +173,7 @@ class TelegramSearchTests(unittest.TestCase):
     def test_same_series_with_separate_episode_records_is_merged(
         self, mock_http_json, _cookie
     ):
-        mock_http_json.return_value = {
+        self.set_search_responses(mock_http_json, {
             "list": [
                 {
                     "vod_name": "Example Series 第1集",
@@ -110,7 +190,7 @@ class TelegramSearchTests(unittest.TestCase):
                     "vod_play_from": "线路一",
                 },
             ],
-        }
+        })
 
         results = telegram_bot.candidates("Example Series")
 
@@ -128,10 +208,40 @@ class TelegramSearchTests(unittest.TestCase):
 
     @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
     @patch.object(telegram_bot, "http_json")
+    def test_same_title_separate_episode_urls_are_marked_as_tv(
+        self, mock_http_json, _cookie
+    ):
+        self.set_search_responses(mock_http_json, {
+            "list": [
+                {
+                    "vod_name": "Example Series",
+                    "vod_year": "2024",
+                    "type_name": "国产",
+                    "vod_play_url": "第1集$https://media.example/ep1.M3U8",
+                    "vod_play_from": "线路一",
+                },
+                {
+                    "vod_name": "Example Series",
+                    "vod_year": "2024",
+                    "type_name": "国产",
+                    "vod_play_url": "第2集$https://media.example/ep2.M3U8",
+                    "vod_play_from": "线路一",
+                },
+            ],
+        })
+
+        results = telegram_bot.candidates("Example Series")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["kind"], "tv")
+        self.assertEqual(len(results[0]["eps"]), 2)
+
+    @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
+    @patch.object(telegram_bot, "http_json")
     def test_same_series_with_multiple_seasons_is_marked_as_tv(
         self, mock_http_json, _cookie
     ):
-        mock_http_json.return_value = {
+        self.set_search_responses(mock_http_json, {
             "list": [
                 {
                     "vod_name": "Example Series 第1季",
@@ -148,7 +258,7 @@ class TelegramSearchTests(unittest.TestCase):
                     "vod_play_from": "线路一",
                 },
             ],
-        }
+        })
 
         results = telegram_bot.candidates("Example Series")
 

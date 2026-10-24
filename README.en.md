@@ -322,7 +322,7 @@ To use the Telegram bot, configure `telegram.token` and at least one authorized 
 | `/auto` | Runs one DecoTV chart/list crawl. |
 | `/recheck` | Runs a source recheck. |
 
-Search and add require enabled DecoTV sources that are reachable and return usable playback links; these sources are synced into STRM Manager's `cms_apis` configuration. Search requests use the DecoTV proxy and an authenticated DecoTV administrator session. The bot restarts and reloads its configuration when `cms_apis` or DecoTV login settings change. If no Jellyfin API key is configured, wait for Jellyfin's scheduled scan or trigger a library scan manually. Only search for and add content you are authorized to access.
+Telegram search uses an authenticated DecoTV administrator session to read all enabled, non-adult DecoTV sources, then searches each source through the DecoTV proxy. Its search scope is therefore not limited to the single `cms_apis` source currently selected in the web UI. The bot refreshes the source list for each search. `cms_apis` remains the source configuration for STRM Manager crawling. If DecoTV administrator credentials are not configured, the bot falls back to sources in `cms_apis`. If no Jellyfin API key is configured, wait for Jellyfin's scheduled scan or trigger a library scan manually. Only search for and add content you are authorized to access.
 
 To obtain your Chat ID, send a message to the bot and read `message.chat.id` from the Telegram Bot API `getUpdates` response. Treat the Bot Token like a password. Never share API URLs containing the token, terminal output, or screenshots that expose it.
 

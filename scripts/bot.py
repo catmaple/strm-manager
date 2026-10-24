@@ -81,6 +81,51 @@ def http_json(url, cookie=""):
         return json.load(r)
 
 
+def get_decotv_sources(cookie):
+    decotv = cfg.get("decotv", {})
+    if not (decotv.get("admin_username") and decotv.get("admin_password")):
+        log("未配置 DecoTV 管理员凭证，Telegram 搜索仅使用 config.json 的 cms_apis")
+        return [
+            {"name": urllib.parse.urlparse(api).netloc, "api": api}
+            for api in cfg.get("cms_apis", [])
+            if isinstance(api, str) and api.strip()
+        ]
+
+    decotv_url = (decotv.get("url") or "http://decotv:3000").rstrip("/")
+    try:
+        payload = http_json(decotv_url + "/api/admin/config", cookie)
+    except Exception as error:
+        log("读取 DecoTV 视频源失败:", type(error).__name__)
+        raise ValueError("无法读取 DecoTV 视频源配置，请检查管理员凭证和 DecoTV 服务状态") from error
+
+    app_config = payload.get("Config") if isinstance(payload, dict) else None
+    source_config = (
+        app_config.get("SourceConfig") if isinstance(app_config, dict) else None
+    )
+    if not isinstance(source_config, list):
+        raise ValueError("DecoTV 配置中未找到有效的视频源列表")
+
+    sources = []
+    seen_apis = set()
+    for item in source_config:
+        if not isinstance(item, dict) or item.get("disabled") or item.get("is_adult"):
+            continue
+        api = str(item.get("api") or "").strip()
+        parsed_api = urllib.parse.urlsplit(api)
+        if (
+            parsed_api.scheme not in {"http", "https"}
+            or not parsed_api.netloc
+            or api in seen_apis
+        ):
+            continue
+        name = str(item.get("name") or item.get("key") or parsed_api.netloc).strip()
+        sources.append({"name": name or parsed_api.netloc, "api": api})
+        seen_apis.add(api)
+    if not sources:
+        raise ValueError("DecoTV 中没有可搜索的已启用非成人视频源")
+    return sources
+
+
 def parse_search_title(raw):
     base, season, explicit = seasons.parse_title(raw)
     episode_match = re.search(
@@ -96,12 +141,13 @@ def parse_search_title(raw):
 
 
 def candidates(title):
-    tbase, tseason, _ = seasons.parse_title(title)
+    tbase, tseason, _, _ = parse_search_title(title)
     out = {}
     decotv = cfg.get("decotv", {})
     decotv_url = (decotv.get("url") or "http://decotv:3000").rstrip("/")
     cookie = get_decotv_cookie()
-    for api in cfg["cms_apis"]:
+    for source in get_decotv_sources(cookie):
+        api = source["api"]
         query = urllib.parse.urlencode({"ac": "detail", "wd": tbase})
         target = f"{api}{'&' if '?' in api else '?'}{query}"
         url = decotv_url + "/api/proxy/cms?url=" + urllib.parse.quote(target, safe="")
@@ -125,10 +171,12 @@ def candidates(title):
             froms = v.get("vod_play_from", "").split("$$$")
             record_lines = []
             for i, g in enumerate(groups):
-                if ".m3u8" not in g:
-                    continue
                 eps = [e.split("$", 1) for e in g.split("#") if "$" in e]
-                eps = [(n, u.strip()) for n, u in eps if ".m3u8" in u]
+                eps = [
+                    (n, u.strip())
+                    for n, u in eps
+                    if ".m3u8" in u.lower()
+                ]
                 if not eps:
                     continue
                 ln = froms[i] if i < len(froms) else f"线路{i}"
@@ -166,6 +214,7 @@ def candidates(title):
     for c in res:
         if (
             (c["episode_marked"] and c["record_count"] > 1)
+            or any(len(line["eps"]) > 1 for line in c["lines"])
             or len(season_groups[(c["name"], c["year"])]) > 1
         ):
             c["kind"] = "tv"
@@ -216,11 +265,15 @@ def do_add(chat, c):
 
 def search_and_reply(chat, title, direct=False):
     say(chat, f"正在搜索:{title}")
-    cands = candidates(title)
+    try:
+        cands = candidates(title)
+    except ValueError as error:
+        say(chat, str(error))
+        return
     if not cands:
         say(chat, "没找到可用的 m3u8 资源,换个关键词或换个源试试。")
         return
-    tb, ts, _ = seasons.parse_title(title)
+    tb, ts, _, _ = parse_search_title(title)
     exact = [c for c in cands if c["name"] == tb and c["season"] == ts]
     if direct and len(exact) == 1:
         do_add(chat, exact[0])
@@ -332,3 +385,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
