@@ -21,6 +21,7 @@
     "无法读取 DecoTV 视频源": "Unable to load DecoTV sources",
     "正在从 DecoTV 同步视频源…": "Syncing sources from DecoTV…",
     "已从 DecoTV 同步视频源。": "Sources synced from DecoTV.",
+    "所选视频源尚未保存，请点击校验并保存。": "The selected source is not saved yet. Click Validate and Save.",
     "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。": "Unable to load sources from DecoTV. Check the DecoTV URL and service status.",
     "DecoTV 中没有可用视频源，请先在 DecoTV 中设置视频源。": "No available sources in DecoTV. Configure sources in DecoTV first.",
     "等待生成预览…": "Waiting for preview…",

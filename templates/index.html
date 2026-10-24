@@ -530,6 +530,11 @@
       sourceSelect.addEventListener("change", function () {
         const selectedApi = sourceSelect.value;
         writeCmsApis(selectedApi ? [selectedApi] : []);
+        if (sourceStatus) {
+          sourceStatus.textContent = window.strmTranslate(
+            "所选视频源尚未保存，请点击校验并保存。"
+          );
+        }
         triggerPreview();
       });
 
