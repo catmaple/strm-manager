@@ -77,13 +77,12 @@
           </div>
           {% endif %}
           <div class="field field-wide">
-            <label for="cms_api_custom">添加视频源</label>
-            <div class="inline-actions" style="margin-bottom: 10px;">
-              <input id="cms_api_custom" type="url" placeholder="输入您有权使用的 CMS API 地址" style="flex: 1; min-width: 240px;">
-              <button class="secondary" type="button" id="addCmsApiButton">确认</button>
-              <button class="secondary" type="button" id="clearCmsApiButton">清空</button>
-            </div>
-            <div id="cmsApiTags" class="tag-list" aria-live="polite"></div>
+            <label for="decotvSourceSelect">选择视频源（来自 DecoTV）</label>
+            <p id="decotvSourceStatus" class="muted" aria-live="polite"></p>
+            <p id="sourceConfigWarning" class="notice error" role="alert" hidden>未能从 DecoTV 获取到视频源。请先到 DecoTV 设置并启用视频源，否则 STRM Manager 无法抓取到可供 Jellyfin 播放的视频。</p>
+            <select id="decotvSourceSelect" disabled>
+              <option value="">正在从 DecoTV 同步视频源…</option>
+            </select>
             <input id="cms_apis" name="cms_apis" type="hidden" value="{{ (config.get('cms_apis') or []) | tojson | forceescape }}">
             <div id="cmsPreview" class="preview-box" aria-live="polite">等待生成预览…</div>
           </div>
@@ -311,7 +310,7 @@
         </div>
 
         <div class="actions">
-          <button type="submit" name="action" value="save">校验并保存</button>
+          <button id="saveConfigButton" type="submit" name="action" value="save" disabled>校验并保存</button>
           <button class="secondary" type="submit" name="action" value="test_connection">测试连接</button>
           <button class="secondary" type="submit" name="action" value="dry_run">Dry Run</button>
           <button class="secondary" type="submit" name="action" value="run_job_auto">扫描DecoTV默认分类</button>
@@ -339,15 +338,16 @@
   <script>
     (function () {
       const textarea = document.getElementById("cms_apis");
-      const input = document.getElementById("cms_api_custom");
-      const addBtn = document.getElementById("addCmsApiButton");
-      const clearBtn = document.getElementById("clearCmsApiButton");
-      const tags = document.getElementById("cmsApiTags");
+      const sourceSelect = document.getElementById("decotvSourceSelect");
       const previewBox = document.getElementById("cmsPreview");
       const sourcesField = document.getElementById("crawl_sources");
+      const sourceStatus = document.getElementById("decotvSourceStatus");
+      const sourceWarning = document.getElementById("sourceConfigWarning");
+      const saveButton = document.getElementById("saveConfigButton");
       const formatBtn = document.getElementById("format-json");
       const csrfToken = "{{ csrf_token() }}";
       let previewRequest = 0;
+      let currentDecoTVSources = [];
 
       function parseCmsApis() {
         const raw = (textarea.value || "").trim();
@@ -374,27 +374,25 @@
       function writeCmsApis(values) {
         const unique = Array.from(new Set(values.map((item) => item.trim()).filter(Boolean)));
         textarea.value = JSON.stringify(unique, null, 2);
-        renderCmsApiTags();
       }
 
-      function renderCmsApiTags() {
-        const values = parseCmsApis();
-        tags.innerHTML = "";
-        values.forEach((value) => {
-          const chip = document.createElement("span");
-          chip.className = "tag";
-          chip.textContent = value;
-          const remove = document.createElement("button");
-          remove.type = "button";
-          remove.textContent = "×";
-          remove.setAttribute("aria-label", window.strmTranslate("移除") + " " + value);
-          remove.addEventListener("click", function () {
-            writeCmsApis(parseCmsApis().filter((item) => item !== value));
-            triggerPreview();
-          });
-          chip.appendChild(remove);
-          tags.appendChild(chip);
+      function renderDecoTVSources(selectedApi) {
+        sourceSelect.replaceChildren();
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = window.strmTranslate("请选择 DecoTV 中已配置的视频源");
+        sourceSelect.appendChild(placeholder);
+        currentDecoTVSources.forEach((source) => {
+          const option = document.createElement("option");
+          option.value = source.api;
+          option.textContent = source.name;
+          option.title = source.api;
+          sourceSelect.appendChild(option);
         });
+        sourceSelect.value = currentDecoTVSources.some((source) => source.api === selectedApi)
+          ? selectedApi
+          : "";
+        sourceSelect.disabled = !currentDecoTVSources.length;
       }
 
       function updatePreview(message, sources) {
@@ -420,15 +418,18 @@
         if (!textarea || !previewBox) return;
         const requestId = ++previewRequest;
         const values = parseCmsApis();
+        if (sourcesField) sourcesField.value = "[]";
         if (!values.length) {
           updatePreview("未配置 CMS API，预览为空。", []);
-          return;
+          if (saveButton) saveButton.disabled = false;
+          return Promise.resolve();
         }
+        if (saveButton) saveButton.disabled = true;
         previewBox.textContent = window.strmTranslate("正在生成预览…");
         const form = new URLSearchParams();
         form.append("csrf_token", csrfToken);
         form.append("cms_apis", JSON.stringify(values));
-        fetch("{{ url_for('generate_sources_api') }}", {
+        return fetch("{{ url_for('generate_sources_api') }}", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
           body: form.toString(),
@@ -441,63 +442,76 @@
               updatePreview(data.error || "生成预览失败。", []);
               return;
             }
-            if (data.sources && data.sources.length && sourcesField) {
-              sourcesField.value = JSON.stringify(data.sources);
-            }
+            if (sourcesField) sourcesField.value = JSON.stringify(data.sources || []);
             updatePreview(data.message || "已生成预览。", data.sources || []);
           })
           .catch(() => {
             if (requestId !== previewRequest) return;
             updatePreview("生成预览失败，请稍后再试。", []);
+          })
+          .finally(() => {
+            if (requestId === previewRequest && saveButton) saveButton.disabled = false;
           });
       }
 
-      function addCmsApiFromInput() {
-        const value = (input.value || "").trim();
-        if (!value) return false;
-        writeCmsApis(parseCmsApis().concat([value]));
-        input.value = "";
+      function loadDecoTVSources() {
+        if (!sourceSelect) return;
+        if (saveButton) saveButton.disabled = true;
+        if (sourceWarning) sourceWarning.hidden = true;
+        if (sourceStatus) {
+          sourceStatus.textContent = window.strmTranslate("正在从 DecoTV 同步视频源…");
+        }
+        fetch("{{ url_for('decotv_sources_api') }}", { credentials: "same-origin" })
+          .then((response) => response.json().then((data) => ({ status: response.status, data })))
+          .then(({ status, data }) => {
+            if (status >= 400) {
+              if (sourceWarning) sourceWarning.hidden = false;
+              if (sourceStatus) sourceStatus.textContent = window.strmTranslate(data.message || "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
+              sourceSelect.replaceChildren();
+              const option = document.createElement("option");
+              option.value = "";
+              option.textContent = window.strmTranslate("无法读取 DecoTV 视频源");
+              sourceSelect.appendChild(option);
+              return;
+            }
+            const previouslySelected = parseCmsApis()[0];
+            currentDecoTVSources = data.sources || [];
+            const selectedApi = currentDecoTVSources.some((source) => source.api === previouslySelected)
+              ? previouslySelected
+              : (currentDecoTVSources[0] || {}).api || "";
+            renderDecoTVSources(selectedApi);
+            writeCmsApis(selectedApi ? [selectedApi] : []);
+            if (!currentDecoTVSources.length) {
+              if (sourceWarning) sourceWarning.hidden = false;
+              if (sourceStatus) {
+                sourceStatus.textContent = window.strmTranslate(
+                  data.message || "DecoTV 中没有可用视频源，请先在 DecoTV 中设置视频源。"
+                );
+              }
+              return triggerPreview();
+            }
+            if (sourceWarning) sourceWarning.hidden = true;
+            if (sourceStatus) {
+              sourceStatus.textContent = window.strmTranslate("已从 DecoTV 同步视频源。");
+            }
+            return triggerPreview();
+          })
+          .catch(() => {
+            if (sourceWarning) sourceWarning.hidden = false;
+            if (sourceStatus) {
+              sourceStatus.textContent = window.strmTranslate("无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
+            }
+          })
+          .finally(() => {
+            if (saveButton) saveButton.disabled = false;
+          });
+      }
+
+      sourceSelect.addEventListener("change", function () {
+        const selectedApi = sourceSelect.value;
+        writeCmsApis(selectedApi ? [selectedApi] : []);
         triggerPreview();
-        return true;
-      }
-
-      if (addBtn) {
-        addBtn.addEventListener("click", function () {
-          if (!addCmsApiFromInput()) input.focus();
-        });
-      }
-
-      if (input) {
-        input.addEventListener("change", addCmsApiFromInput);
-      }
-
-      if (clearBtn) {
-        clearBtn.addEventListener("click", function () {
-          textarea.value = "[]";
-          renderCmsApiTags();
-          triggerPreview();
-          window.addEventListener("strm-language-change", function () {
-            renderCmsApiTags();
-            triggerPreview();
-          });
-        });
-      }
-
-      if (input) {
-        input.addEventListener("keydown", function (event) {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            if (addBtn) addBtn.click();
-          }
-        });
-      }
-
-      if (textarea) {
-        textarea.addEventListener("input", function () {
-          renderCmsApiTags();
-          triggerPreview();
-        });
-      }
+      });
 
       if (formatBtn) {
         formatBtn.addEventListener("click", function () {
@@ -511,8 +525,11 @@
         });
       }
 
-      renderCmsApiTags();
-      triggerPreview();
+      loadDecoTVSources();
+      window.addEventListener("strm-language-change", function () {
+        renderDecoTVSources(sourceSelect.value);
+        loadDecoTVSources();
+      });
     })();
   </script>
 </body>

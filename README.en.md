@@ -229,9 +229,6 @@ The web form manages the existing `config.json` format. Use Docker service names
     "url": "http://jellyfin:8096",
     "api_key": "JELLYFIN API KEY"
   },
-  "cms_apis": [
-    "https://YOUR-CMS/api.php/provide/vod"
-  ],
   "crawl": {
     "via_decotv": true,
     "sources": []
@@ -239,7 +236,7 @@ The web form manages the existing `config.json` format. Use Docker service names
 }
 ```
 
-In the console, add user-configured CMS APIs to preview their categories. The interface does not include a preset source list. Configure scheduled jobs, test connections, run a Dry Run, or manually start a DecoTV default-category scan, source-category scan, source recheck, or statistics job.
+When the console opens, STRM Manager automatically syncs all enabled sources from DecoTV's admin configuration and previews their categories. The console does not provide controls to add or remove sources manually. If no sources are loaded, configure them in DecoTV first and make sure STRM Manager can reach the configured DecoTV URL. The **Validate and Save** button remains disabled until the source sync finishes. The console also supports scheduled jobs, connection tests, Dry Run, and manual DecoTV default-category scans, source-category scans, source rechecks, and statistics.
 
 Only **Validate and Save** persists the submitted form. Test Connection, Dry Run, and manual job actions do not save pending form edits. Configuration saves keep up to 10 backups. Passwords, Telegram tokens, and Jellyfin API keys are masked; leaving a secret field blank preserves its current value. The full-config viewer also redacts secrets.
 
@@ -328,7 +325,7 @@ To use the Telegram bot, configure `telegram.token` and at least one authorized 
 | `/auto` | Runs one DecoTV chart/list crawl. |
 | `/recheck` | Runs a source recheck. |
 
-Search and add require configured `cms_apis` that are reachable and return usable playback links. If no Jellyfin API key is configured, wait for Jellyfin's scheduled scan or trigger a library scan manually. Only search for and add content you are authorized to access.
+Search and add require enabled DecoTV sources that are reachable and return usable playback links; these sources are synced into STRM Manager's `cms_apis` configuration. If no Jellyfin API key is configured, wait for Jellyfin's scheduled scan or trigger a library scan manually. Only search for and add content you are authorized to access.
 
 To obtain your Chat ID, send a message to the bot and read `message.chat.id` from the Telegram Bot API `getUpdates` response. Treat the Bot Token like a password. Never share API URLs containing the token, terminal output, or screenshots that expose it.
 

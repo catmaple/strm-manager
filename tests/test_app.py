@@ -102,9 +102,16 @@ class ConfigWebTests(unittest.TestCase):
         self.assertIn("线路复测", body)
         self.assertIn("统计数量", body)
         self.assertEqual(manager.hide_secrets(self.initial)["cookie"], manager.SECRET_MASK)
-        self.assertIn("添加视频源", body)
-        self.assertIn('id="addCmsApiButton">确认</button>', body)
-        self.assertIn("输入您有权使用的 CMS API 地址", body)
+        self.assertIn("选择视频源（来自 DecoTV）", body)
+        self.assertIn('id="decotvSourceSelect"', body)
+        self.assertIn('id="sourceConfigWarning"', body)
+        self.assertIn("请先到 DecoTV 设置并启用视频源", body)
+        self.assertIn("否则 STRM Manager 无法抓取到可供 Jellyfin 播放的视频", body)
+        self.assertIn('id="saveConfigButton" type="submit"', body)
+        self.assertNotIn('id="addCmsApiButton"', body)
+        self.assertNotIn('id="clearCmsApiButton"', body)
+        self.assertNotIn('id="decotvSourceList"', body)
+        self.assertNotIn('id="cms_api_custom"', body)
         self.assertNotIn("cms-api-presets", body)
         self.assertNotIn("datalist", body)
         self.assertIn('id="cms_apis" name="cms_apis" type="hidden"', body)
@@ -260,6 +267,71 @@ class ConfigWebTests(unittest.TestCase):
         self.assertEqual(response.json["count"], 1)
         self.assertEqual(response.json["sources"][0]["types"]["1"], "movie")
         mock_generate.assert_called_once_with(["https://example.com/api.php/provide/vod"])
+
+    @patch.object(manager.urllib.request, "urlopen")
+    def test_decotv_sources_api_lists_enabled_sources_without_other_config(self, mock_urlopen):
+        self.authenticate()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return json.dumps({
+                    "Role": "owner",
+                    "Config": {
+                        "SourceConfig": [
+                            {"name": "Source One", "api": "https://source.example/api", "disabled": False},
+                            {"key": "Disabled", "api": "https://disabled.example/api", "disabled": True},
+                            {"name": "Invalid", "api": "file:///etc/passwd"},
+                            {"name": "Duplicate", "api": "https://source.example/api"},
+                        ],
+                        "UserConfig": {"Users": [{"username": "private-user"}]},
+                    },
+                }).encode("utf-8")
+
+        mock_urlopen.return_value = FakeResponse()
+        response = self.client.get("/api/decotv/sources")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json["sources"],
+            [{"name": "Source One", "api": "https://source.example/api"}],
+        )
+        self.assertNotIn("UserConfig", response.get_data(as_text=True))
+        self.assertEqual(
+            mock_urlopen.call_args.args[0].full_url,
+            "http://decotv:3000/api/admin/config",
+        )
+
+    @patch.object(manager.urllib.request, "urlopen")
+    def test_decotv_sources_api_prompts_when_no_sources_are_configured(self, mock_urlopen):
+        self.authenticate()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return b'{"Config":{"SourceConfig":[]}}'
+
+        mock_urlopen.return_value = FakeResponse()
+        response = self.client.get("/api/decotv/sources")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["sources"], [])
+        self.assertIn("请先在 DecoTV 中设置视频源", response.json["message"])
+
+    def test_decotv_sources_api_requires_authentication(self):
+        response = self.client.get("/api/decotv/sources")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login", response.headers["Location"])
 
     def test_scheduler_form_parses_schedule_settings(self):
         parsed = manager.config_from_form({

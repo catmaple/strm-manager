@@ -269,9 +269,6 @@ docker compose up -d strm-manager
     "url": "http://jellyfin:8096",
     "api_key": "填入 Jellyfin API Key"
   },
-  "cms_apis": [
-    "https://你的CMS接口/api.php/provide/vod"
-  ],
   "crawl": {
     "via_decotv": true,
     "sources": []
@@ -279,7 +276,7 @@ docker compose up -d strm-manager
 }
 ```
 
-表单支持添加用户自行配置的 CMS API、预览分类、配置定时任务、测试连接、Dry Run，以及手动运行 DecoTV 默认分类扫描、视频源扫描、线路复测和统计。界面不提供预置视频源列表。点击“校验并保存”才会保存配置；测试连接、Dry Run 和立即运行操作不会保存本次表单修改。配置保存时会自动备份，最多保留最近 10 份。密码、Telegram Token 和 Jellyfin API Key 会脱敏；密钥输入框留空表示保留原值。完整 `config.json` 查看窗口也会隐藏敏感值。
+STRM Manager 会在打开控制台时从 DecoTV 管理配置自动同步所有已启用的视频源，并自动预览分类；控制台不提供手动添加或删除视频源的功能。若未读取到视频源，请先在 DecoTV 管理界面设置来源，并确认 STRM Manager 的 DecoTV URL 可访问。读取完成前“校验并保存”按钮会暂时禁用。表单还支持配置定时任务、测试连接、Dry Run，以及手动运行 DecoTV 默认分类扫描、视频源扫描、线路复测和统计。点击“校验并保存”才会保存配置；测试连接、Dry Run 和立即运行操作不会保存本次表单修改。配置保存时会自动备份，最多保留最近 10 份。密码、Telegram Token 和 Jellyfin API Key 会脱敏；密钥输入框留空表示保留原值。完整 `config.json` 查看窗口也会隐藏敏感值。
 
 网页表单隐藏了部分高级字段（例如 `list_urls`）；这些字段会从当前配置保留，不会因表单保存而被删除。若需修改隐藏字段或清除已保存的密钥，请先备份，再直接编辑 `data/manager/config.json`。
 
@@ -364,7 +361,7 @@ tail -n 100 data/manager/logs/recheck.log
 | `/auto` | 手动运行一次 DecoTV 榜单抓取 |
 | `/recheck` | 手动运行线路复测 |
 
-搜索和添加要求已配置 `cms_apis`，且 CMS 可访问并返回可用播放链接。若未配置 Jellyfin API Key，生成 STRM 后需等待 Jellyfin 定时扫描，或在 Jellyfin 中手动扫描媒体库。请只搜索和添加自己有权访问的内容。
+搜索和添加要求 DecoTV 中已启用的视频源可访问并返回可用播放链接；这些源会同步到 STRM Manager 使用的 `cms_apis`。若未配置 Jellyfin API Key，生成 STRM 后需等待 Jellyfin 定时扫描，或在 Jellyfin 中手动扫描媒体库。请只搜索和添加自己有权访问的内容。
 
 获取 Chat ID 时，可先向机器人发送一条消息，再通过 Telegram Bot API 的 `getUpdates` 响应读取 `message.chat.id`。Bot Token 是密码，不要把带 Token 的 API URL、终端输出或截图分享给他人；配置完授权 ID 后不要再公开 Token。
 

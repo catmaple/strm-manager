@@ -142,6 +142,8 @@ button {
   cursor: pointer;
 }
 button:hover { background: #12558a; }
+button:disabled,
+button:disabled:hover { opacity: 0.55; cursor: wait; }
 button.secondary { border: 1px solid #bdc9d5; color: #263445; background: #fff; }
 button.secondary:hover { background: #edf2f6; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 14px; }

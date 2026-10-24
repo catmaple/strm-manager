@@ -439,6 +439,54 @@ def discover_sources_from_cms_apis(api_urls):
     return results
 
 
+def fetch_decotv_sources(config):
+    decotv_url = (config.get("decotv") or {}).get("url") or "http://decotv:3000"
+    parsed_url = urllib.parse.urlsplit(decotv_url.strip())
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        raise ValueError("DecoTV URL 必须是有效的 HTTP 或 HTTPS 地址")
+    if parsed_url.username or parsed_url.password:
+        raise ValueError("DecoTV URL 不应包含用户名或密码")
+
+    endpoint = urllib.parse.urlunsplit((
+        parsed_url.scheme,
+        parsed_url.netloc,
+        parsed_url.path.rstrip("/") + "/api/admin/config",
+        "",
+        "",
+    ))
+    req = urllib.request.Request(
+        endpoint,
+        headers={"Accept": "application/json", "User-Agent": "STRM-Manager/1.0"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as response:
+        content = response.read(2 * 1024 * 1024 + 1)
+    if len(content) > 2 * 1024 * 1024:
+        raise ValueError("DecoTV 配置响应超过允许大小")
+    payload = json.loads(content)
+    if not isinstance(payload, dict):
+        raise ValueError("DecoTV 配置响应格式无效")
+    app_config = payload.get("Config")
+    source_config = app_config.get("SourceConfig") if isinstance(app_config, dict) else None
+    if not isinstance(source_config, list):
+        raise ValueError("DecoTV 配置中未找到 SourceConfig")
+
+    sources = []
+    seen_apis = set()
+    for item in source_config:
+        if not isinstance(item, dict) or item.get("disabled") is True:
+            continue
+        api = str(item.get("api") or "").strip()
+        api_url = urllib.parse.urlsplit(api)
+        if api_url.scheme not in {"http", "https"} or not api_url.netloc or api in seen_apis:
+            continue
+        name = str(item.get("name") or item.get("key") or api_url.netloc).strip()
+        if not name:
+            name = api_url.netloc
+        sources.append({"name": name, "api": api})
+        seen_apis.add(api)
+    return sources
+
+
 def merge_config(base, overlay):
     if isinstance(base, dict) and isinstance(overlay, dict):
         result = dict(base)
@@ -682,6 +730,25 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.get("/api/decotv/sources")
+def decotv_sources_api():
+    try:
+        config = load_config()
+        sources = fetch_decotv_sources(config)
+    except (OSError, urllib.error.URLError, ValueError, json.JSONDecodeError) as error:
+        app.logger.warning("Unable to load DecoTV source list: %s", type(error).__name__)
+        return {
+            "sources": [],
+            "message": "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。",
+        }, 502
+    if not sources:
+        return {
+            "sources": [],
+            "message": "DecoTV 中没有可用视频源，请先在 DecoTV 中设置视频源。",
+        }
+    return {"sources": sources, "message": ""}
 
 
 @app.route("/api/generate_sources", methods=["POST"])
