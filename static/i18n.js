@@ -16,14 +16,27 @@
     "基础配置": "Basic Settings",
     "保留字段（未识别配置）": "Preserved field (unrecognized configuration)",
     "选择视频源（来自 DecoTV）": "Select a source (from DecoTV)",
-    "未能从 DecoTV 获取到视频源。请先到 DecoTV 设置并启用视频源，否则 STRM Manager 无法抓取到可供 Jellyfin 播放的视频。": "No video sources could be retrieved from DecoTV. Configure and enable sources in DecoTV first; otherwise, STRM Manager cannot crawl videos for Jellyfin playback.",
     "请选择 DecoTV 中已配置的视频源": "Select a source configured in DecoTV",
     "无法读取 DecoTV 视频源": "Unable to load DecoTV sources",
     "正在从 DecoTV 同步视频源…": "Syncing sources from DecoTV…",
     "已从 DecoTV 同步视频源。": "Sources synced from DecoTV.",
     "所选视频源尚未保存，请点击校验并保存。": "The selected source is not saved yet. Click Validate and Save.",
+    "尚未配置 DecoTV 管理员凭证。请在本页下方填写管理员用户名和密码，点击“校验并保存”后刷新页面以同步视频源。": "DecoTV administrator credentials are not configured. Enter the administrator username and password below, click Validate and Save, then refresh the page to sync sources.",
+    "DecoTV 管理配置中尚未添加视频源。请先登录 DecoTV 管理界面添加并启用视频源。": "No sources are configured in DecoTV yet. Sign in to the DecoTV admin interface, then add and enable sources.",
+    "DecoTV 中没有可用的已启用非成人视频源。请检查来源是否已启用且 API 地址有效；禁用源和成人源不会显示。": "DecoTV has no available enabled non-adult sources. Check that a source is enabled and its API URL is valid. Disabled and adult sources are hidden.",
+    "无法同步 DecoTV 视频源，请查看提示。": "Unable to sync DecoTV sources. See the message below.",
+    "请确认该账号拥有 DecoTV 管理员权限。": "Verify that this account has DecoTV administrator privileges.",
+    "DecoTV 登录成功但没有返回 Cookie，无法读取管理员配置。": "DecoTV login succeeded but returned no session cookie, so its admin configuration cannot be read.",
+    "DecoTV 配置接口返回的内容不是有效 JSON/UTF-8。": "DecoTV returned invalid JSON or UTF-8 from its configuration endpoint.",
+    "DecoTV 配置中未找到 SourceConfig": "The DecoTV configuration did not contain SourceConfig. Check the DecoTV version and administrator access.",
+    "DecoTV 配置响应格式无效": "DecoTV returned an invalid configuration response.",
+    "DecoTV 配置响应超过允许大小": "The DecoTV configuration response exceeded the allowed size.",
+    "DecoTV URL 必须是有效的 HTTP 或 HTTPS 地址": "The DecoTV URL must be a valid HTTP or HTTPS address.",
+    "DecoTV URL 不应包含用户名或密码": "Do not include a username or password in the DecoTV URL.",
+    "连接 DecoTV 超时，请检查 DecoTV 地址、服务状态及容器网络。": "Connection to DecoTV timed out. Check the DecoTV URL, service status, and container network.",
+    "无法连接 DecoTV，请检查配置的 DecoTV URL 和 STRM Manager 容器网络。": "Unable to connect to DecoTV. Check its configured URL and the STRM Manager container network.",
+    "读取 DecoTV 配置失败，请检查 STRM Manager 日志和数据目录权限。": "Failed to read DecoTV configuration. Check STRM Manager logs and data-directory permissions.",
     "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。": "Unable to load sources from DecoTV. Check the DecoTV URL and service status.",
-    "DecoTV 中没有可用视频源，请先在 DecoTV 中设置视频源。": "No available sources in DecoTV. Configure sources in DecoTV first.",
     "等待生成预览…": "Waiting for preview…",
     "认证与服务地址": "Authentication and Service URLs",
     "DecoTV 登录 URL": "DecoTV Login URL",
@@ -119,6 +132,16 @@
 
   function translateText(value) {
     if (translations[value] !== undefined) return translations[value];
+    if (value.startsWith("DecoTV 管理员登录失败：HTTP ")) {
+      return value
+        .replace("DecoTV 管理员登录失败：HTTP ", "DecoTV administrator login failed: HTTP ")
+        .replace("。请检查管理员账号和密码。", ". Check the administrator username and password.");
+    }
+    if (value.startsWith("DecoTV 管理员登录后读取配置失败：HTTP ")) {
+      return value
+        .replace("DecoTV 管理员登录后读取配置失败：HTTP ", "Signed in to DecoTV, but failed to read its configuration: HTTP ")
+        .replace("。", ". ");
+    }
     if (value.startsWith("已生成 ") && value.endsWith(" 个源分类。")) {
       return value.replace("已生成 ", "Generated ").replace(" 个源分类。", " source categories.");
     }

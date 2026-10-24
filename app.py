@@ -454,7 +454,8 @@ def fetch_decotv_sources(config):
     password = (config.get("decotv") or {}).get("admin_password", "")
     if not username or not password:
         raise ValueError(
-            "未配置 DecoTV 管理员凭证；请在管理界面的 DecoTV 管理员账号和密码中设置。"
+            "尚未配置 DecoTV 管理员凭证。请在本页下方填写管理员用户名和密码，"
+            "点击“校验并保存”后刷新页面以同步视频源。"
         )
 
     login_url = base_url + "/api/login"
@@ -509,6 +510,10 @@ def fetch_decotv_sources(config):
     source_config = app_config.get("SourceConfig") if isinstance(app_config, dict) else None
     if not isinstance(source_config, list):
         raise ValueError("DecoTV 配置中未找到 SourceConfig")
+    if not source_config:
+        raise ValueError(
+            "DecoTV 管理配置中尚未添加视频源。请先登录 DecoTV 管理界面添加并启用视频源。"
+        )
 
     sources = []
     seen_apis = set()
@@ -528,6 +533,11 @@ def fetch_decotv_sources(config):
             name = api_url.netloc
         sources.append({"name": name, "api": api})
         seen_apis.add(api)
+    if not sources:
+        raise ValueError(
+            "DecoTV 中没有可用的已启用非成人视频源。请检查来源是否已启用且 API 地址有效；"
+            "禁用源和成人源不会显示。"
+        )
     return sources
 
 
@@ -804,8 +814,11 @@ def decotv_sources_api():
     if not sources:
         return {
             "sources": [],
-            "message": "DecoTV 中没有可用视频源，请先在 DecoTV 中设置视频源。",
-        }
+            "message": (
+                "DecoTV 中没有可用的已启用非成人视频源。请检查来源是否已启用且 API 地址有效；"
+                "禁用源和成人源不会显示。"
+            ),
+        }, 502
     return {"sources": sources, "message": ""}
 
 
@@ -1087,17 +1100,29 @@ def stop_bot():
             process.kill()
 
 
+def telegram_bot_signature(config):
+    telegram = config.get("telegram") or {}
+    token = telegram.get("token", "")
+    allowed = telegram.get("allowed_chat_ids", [])
+    if not token or not allowed:
+        return None
+    settings = {
+        "telegram": [token, allowed],
+        "cms_apis": config.get("cms_apis", []),
+        "decotv": config.get("decotv", {}),
+        "jellyfin": config.get("jellyfin", {}),
+    }
+    return hashlib.sha256(
+        json.dumps(settings, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
 def bot_supervisor_loop():
     global BOT_PROCESS, BOT_SIGNATURE
     while not STOP_EVENT.is_set():
         try:
             config = load_config()
-            telegram = config.get("telegram") or {}
-            token = telegram.get("token", "")
-            allowed = telegram.get("allowed_chat_ids", [])
-            signature = hashlib.sha256(
-                json.dumps([token, allowed], sort_keys=True).encode("utf-8")
-            ).hexdigest() if token and allowed else None
+            signature = telegram_bot_signature(config)
         except (OSError, ValueError, json.JSONDecodeError) as error:
             signature = None
             write_log("bot", f"读取配置失败：{error}")

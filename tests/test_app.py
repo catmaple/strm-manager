@@ -128,8 +128,7 @@ class ConfigWebTests(unittest.TestCase):
         self.assertIn('id="sourceConfigWarning"', body)
         self.assertNotIn("sourceDebug", body)
         self.assertNotIn("调试请求信息", body)
-        self.assertIn("请先到 DecoTV 设置并启用视频源", body)
-        self.assertIn("否则 STRM Manager 无法抓取到可供 Jellyfin 播放的视频", body)
+        self.assertNotIn("请先到 DecoTV 设置并启用视频源", body)
         self.assertIn('id="saveConfigButton" type="submit"', body)
         self.assertNotIn('id="addCmsApiButton"', body)
         self.assertNotIn('id="clearCmsApiButton"', body)
@@ -466,9 +465,43 @@ class ConfigWebTests(unittest.TestCase):
         mock_urlopen.side_effect = [FakeResponse(), FakeResponse()]
         response = self.client.get("/api/decotv/sources")
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json["sources"], [])
-        self.assertIn("请先在 DecoTV 中设置视频源", response.json["message"])
+        self.assertIn("DecoTV 管理配置中尚未添加视频源", response.json["message"])
+
+    @patch.object(
+        manager,
+        "load_config",
+        return_value={
+            "decotv": {
+                "url": "http://decotv:3000",
+                "admin_username": "admin",
+                "admin_password": "",
+            },
+        },
+    )
+    def test_decotv_sources_api_prompts_for_missing_admin_credentials(self, _load_config):
+        self.authenticate()
+
+        response = self.client.get("/api/decotv/sources")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("尚未配置 DecoTV 管理员凭证", response.json["message"])
+        self.assertIn("点击“校验并保存”后刷新页面", response.json["message"])
+
+    @patch.object(
+        manager,
+        "fetch_decotv_sources",
+        return_value=[],
+    )
+    def test_decotv_sources_api_explains_no_available_sources(self, _fetch_sources):
+        self.authenticate()
+
+        response = self.client.get("/api/decotv/sources")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("没有可用的已启用非成人视频源", response.json["message"])
+        self.assertIn("禁用源和成人源不会显示", response.json["message"])
 
     def test_decotv_sources_api_requires_authentication(self):
         response = self.client.get("/api/decotv/sources")
@@ -492,7 +525,7 @@ class ConfigWebTests(unittest.TestCase):
         self.assertIn("管理员账号和密码", response.json["message"])
 
     def test_fetch_decotv_sources_requires_password_in_config(self):
-        with self.assertRaisesRegex(ValueError, "管理界面的 DecoTV 管理员账号和密码"):
+        with self.assertRaisesRegex(ValueError, "尚未配置 DecoTV 管理员凭证"):
             manager.fetch_decotv_sources({
                 "decotv": {"url": "http://decotv:3000"},
                 "login": {"username": "admin", "password": "script-password"},
@@ -504,6 +537,34 @@ class ConfigWebTests(unittest.TestCase):
         })
         self.assertEqual(hidden["decotv"]["admin_password"], manager.SECRET_MASK)
         self.assertEqual(hidden["decotv"]["admin_username"], "admin")
+
+    def test_telegram_bot_signature_changes_when_search_config_changes(self):
+        original = {
+            "telegram": {"token": "token", "allowed_chat_ids": [123]},
+            "cms_apis": ["https://one.example/api"],
+            "decotv": {"url": "http://decotv:3000", "admin_username": "admin"},
+            "jellyfin": {"url": "http://jellyfin:8096"},
+        }
+        changed_sources = {
+            **original,
+            "cms_apis": ["https://two.example/api"],
+        }
+        changed_credentials = {
+            **original,
+            "decotv": {
+                **original["decotv"],
+                "admin_password": "changed",
+            },
+        }
+
+        original_signature = manager.telegram_bot_signature(original)
+
+        self.assertEqual(manager.telegram_bot_signature(original), original_signature)
+        self.assertNotEqual(manager.telegram_bot_signature(changed_sources), original_signature)
+        self.assertNotEqual(
+            manager.telegram_bot_signature(changed_credentials),
+            original_signature,
+        )
 
     def test_scheduler_form_parses_schedule_settings(self):
         parsed = manager.config_from_form({

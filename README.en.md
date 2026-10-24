@@ -315,14 +315,14 @@ To use the Telegram bot, configure `telegram.token` and at least one authorized 
 | Command or action | What it does |
 |---|---|
 | `/stats` or `/status` | Replies with movie/TV counts, crawl progress, source health, disk space, and DecoTV/Jellyfin status. It only reports the current state; it does not update the weekly statistics snapshot. |
-| Type and send a title directly (no `/` command needed), for example `Example Movie` | Searches configured CMS APIs and returns buttons for available matches. Selecting one tests the routes, chooses a source, creates STRM files, and asks Jellyfin to scan the library. |
+| Type and send a title directly (no `/` command needed), for example `Example Movie` | Searches the configured CMS APIs through the DecoTV proxy and returns buttons for available matches. Selecting one tests the routes, chooses a source, creates STRM files, and asks Jellyfin to scan the library. |
 | `/add TITLE` | Searches for a title and adds it directly only when there is a unique match; otherwise, it presents choices. |
 | `/scan` | Requests a Jellyfin library scan. |
 | `/crawl` | Runs one source-category crawl, capped at 30 new items. |
 | `/auto` | Runs one DecoTV chart/list crawl. |
 | `/recheck` | Runs a source recheck. |
 
-Search and add require enabled DecoTV sources that are reachable and return usable playback links; these sources are synced into STRM Manager's `cms_apis` configuration. If no Jellyfin API key is configured, wait for Jellyfin's scheduled scan or trigger a library scan manually. Only search for and add content you are authorized to access.
+Search and add require enabled DecoTV sources that are reachable and return usable playback links; these sources are synced into STRM Manager's `cms_apis` configuration. Search requests use the DecoTV proxy and an authenticated DecoTV administrator session. The bot restarts and reloads its configuration when `cms_apis` or DecoTV login settings change. If no Jellyfin API key is configured, wait for Jellyfin's scheduled scan or trigger a library scan manually. Only search for and add content you are authorized to access.
 
 To obtain your Chat ID, send a message to the bot and read `message.chat.id` from the Telegram Bot API `getUpdates` response. Treat the Bot Token like a password. Never share API URLs containing the token, terminal output, or screenshots that expose it.
 

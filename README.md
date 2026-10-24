@@ -351,14 +351,14 @@ tail -n 100 data/manager/logs/recheck.log
 | 操作 | 说明 |
 |---|---|
 | `/stats` 或 `/status` | 查看媒体库电影/剧集数量、抓取进度、线路状态、磁盘空间及 DecoTV/Jellyfin 服务状态；此命令只查询并回复，不更新每周统计快照 |
-| 直接输入并发送片名（无需 `/` 命令），例如 `示例电影` | 搜索已配置的 CMS API，并返回可用版本按钮；点击一个版本后，机器人测速选择线路、生成 STRM 文件，并尝试通知 Jellyfin 扫描 |
+| 直接输入并发送片名（无需 `/` 命令），例如 `示例电影` | 通过 DecoTV 代理搜索当前已配置的 CMS API，并返回可用版本按钮；点击一个版本后，机器人测速选择线路、生成 STRM 文件，并尝试通知 Jellyfin 扫描 |
 | `/add 片名` | 搜索片名；只有唯一匹配时才会直接添加，否则会显示版本供选择 |
 | `/scan` | 请求 Jellyfin 扫描媒体库 |
 | `/crawl` | 手动运行一次视频源分类抓取，最多新增 30 部 |
 | `/auto` | 手动运行一次 DecoTV 榜单抓取 |
 | `/recheck` | 手动运行线路复测 |
 
-搜索和添加要求 DecoTV 中已启用的视频源可访问并返回可用播放链接；这些源会同步到 STRM Manager 使用的 `cms_apis`。若未配置 Jellyfin API Key，生成 STRM 后需等待 Jellyfin 定时扫描，或在 Jellyfin 中手动扫描媒体库。请只搜索和添加自己有权访问的内容。
+搜索和添加要求 DecoTV 中已启用的视频源可访问并返回可用播放链接；这些源会同步到 STRM Manager 使用的 `cms_apis`。搜索通过 DecoTV 代理执行，并使用 DecoTV 管理员凭证建立会话。更改或保存 `cms_apis`、DecoTV 登录信息后，机器人会自动重启并加载最新配置。若未配置 Jellyfin API Key，生成 STRM 后需等待 Jellyfin 定时扫描，或在 Jellyfin 中手动扫描媒体库。请只搜索和添加自己有权访问的内容。
 
 获取 Chat ID 时，可先向机器人发送一条消息，再通过 Telegram Bot API 的 `getUpdates` 响应读取 `message.chat.id`。Bot Token 是密码，不要把带 Token 的 API URL、终端输出或截图分享给他人；配置完授权 ID 后不要再公开 Token。
 

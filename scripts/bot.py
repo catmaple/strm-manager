@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, re, sys, json, time, subprocess, urllib.request, urllib.parse
+import os, re, sys, json, time, subprocess, urllib.request, urllib.parse, urllib.error
 sys.path.insert(0, "/opt/m3u")
 import probe
 import seasons
@@ -8,11 +8,46 @@ CONFIG = "/opt/m3u/config.json"
 UA = "Mozilla/5.0"
 SKIP_WORDS = ("预告", "花絮", "特辑")
 
-cfg = json.load(open(CONFIG, encoding="utf-8"))
-TG = cfg["telegram"]
-ALLOWED = {int(x) for x in TG.get("allowed_chat_ids", [])}
-API = f"https://api.telegram.org/bot{TG['token']}/"
+cfg = {}
+TG = {}
+ALLOWED = set()
+API = ""
 cache = {}  # chat_id -> 最近一次搜索的候选列表
+
+
+def get_decotv_cookie():
+    decotv = cfg.get("decotv", {})
+    username = (decotv.get("admin_username") or "").strip()
+    password = decotv.get("admin_password", "")
+    if not username or not password:
+        cookie = cfg.get("cookie", "")
+        if not cookie:
+            log("缺少 DecoTV 管理员凭证，无法通过 DecoTV 代理搜索")
+        return cookie
+
+    login_url = decotv.get("url", "http://decotv:3000").rstrip("/") + "/api/login"
+    body = json.dumps({"username": username, "password": password}).encode("utf-8")
+    request = urllib.request.Request(
+        login_url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": UA},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            cookies = response.headers.get_all("Set-Cookie") or []
+    except (OSError, urllib.error.URLError) as error:
+        log("DecoTV 登录失败:", type(error).__name__)
+        return cfg.get("cookie", "")
+
+    cookie = "; ".join(
+        part.split(";", 1)[0].strip()
+        for part in cookies
+        if part.split(";", 1)[0].strip()
+    )
+    if not cookie:
+        log("DecoTV 登录成功但未返回 Cookie")
+    return cookie or cfg.get("cookie", "")
 
 
 def log(*a):
@@ -37,8 +72,11 @@ def say(chat, text, buttons=None):
         log("发送失败:", e)
 
 
-def http_json(url):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+def http_json(url, cookie=""):
+    headers = {"User-Agent": UA}
+    if cookie:
+        headers["Cookie"] = cookie
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=25) as r:
         return json.load(r)
 
@@ -46,10 +84,15 @@ def http_json(url):
 def candidates(title):
     tbase, tseason, _ = seasons.parse_title(title)
     out = {}
+    decotv = cfg.get("decotv", {})
+    decotv_url = (decotv.get("url") or "http://decotv:3000").rstrip("/")
+    cookie = get_decotv_cookie()
     for api in cfg["cms_apis"]:
-        url = f"{api}{'&' if '?' in api else '?'}ac=detail&wd={urllib.parse.quote(tbase)}"
+        query = urllib.parse.urlencode({"ac": "detail", "wd": tbase})
+        target = f"{api}{'&' if '?' in api else '?'}{query}"
+        url = decotv_url + "/api/proxy/cms?url=" + urllib.parse.quote(target, safe="")
         try:
-            data = http_json(url)
+            data = http_json(url, cookie)
         except Exception as e:
             log("搜索失败:", api, e)
             continue
@@ -214,6 +257,12 @@ def handle(u):
 
 
 def main():
+    global cfg, TG, ALLOWED, API
+    with open(CONFIG, encoding="utf-8") as config_file:
+        cfg = json.load(config_file)
+    TG = cfg.get("telegram", {})
+    ALLOWED = {int(x) for x in TG.get("allowed_chat_ids", [])}
+    API = f"https://api.telegram.org/bot{TG.get('token', '')}/"
     log("机器人启动,授权用户:", sorted(ALLOWED))
     offset = None
     while True:
@@ -234,4 +283,5 @@ def main():
                 log("处理出错:", e)
 
 
-main()
+if __name__ == "__main__":
+    main()

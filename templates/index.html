@@ -79,7 +79,7 @@
           <div class="field field-wide">
             <label for="decotvSourceSelect">选择视频源（来自 DecoTV）</label>
             <p id="decotvSourceStatus" class="muted" aria-live="polite"></p>
-            <p id="sourceConfigWarning" class="notice error" role="alert" hidden>未能从 DecoTV 获取到视频源。请先到 DecoTV 设置并启用视频源，否则 STRM Manager 无法抓取到可供 Jellyfin 播放的视频。</p>
+            <p id="sourceConfigWarning" class="notice error" role="alert" hidden></p>
             <select id="decotvSourceSelect" disabled>
               <option value="">正在从 DecoTV 同步视频源…</option>
             </select>
@@ -454,8 +454,13 @@
       }
 
       function showSourceLoadFailure(message) {
-        if (sourceWarning) sourceWarning.hidden = false;
-        if (sourceStatus) sourceStatus.textContent = window.strmTranslate(message);
+        if (sourceWarning) {
+          sourceWarning.textContent = window.strmTranslate(message);
+          sourceWarning.hidden = false;
+        }
+        if (sourceStatus) {
+          sourceStatus.textContent = window.strmTranslate("无法同步 DecoTV 视频源，请查看提示。");
+        }
         sourceSelect.replaceChildren();
         const option = document.createElement("option");
         option.value = "";
@@ -504,12 +509,9 @@
             renderDecoTVSources(selectedApi);
             writeCmsApis(selectedApi ? [selectedApi] : []);
             if (!currentDecoTVSources.length) {
-              if (sourceWarning) sourceWarning.hidden = false;
-              if (sourceStatus) {
-                sourceStatus.textContent = window.strmTranslate(
-                  data.message || "DecoTV 中没有可用视频源，请先在 DecoTV 中设置视频源。"
-                );
-              }
+              showSourceLoadFailure(
+                data.message || "DecoTV 中没有可用的已启用非成人视频源。请检查来源是否已启用且 API 地址有效；禁用源和成人源不会显示。"
+              );
               return triggerPreview();
             }
             if (sourceWarning) sourceWarning.hidden = true;
