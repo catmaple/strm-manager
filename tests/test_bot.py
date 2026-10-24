@@ -386,7 +386,8 @@ class TelegramSearchTests(unittest.TestCase):
                 files.append(str(path))
             item = {"kind": "tv", "files": files}
             line = {
-                "eps": [
+                "eps": [("第1集", "https://new.example/ep1.m3u8")],
+                "series_eps": [
                     ("第1集", "https://new.example/ep1.m3u8"),
                     ("第2集", "https://new.example/ep2.m3u8"),
                 ]
@@ -495,6 +496,61 @@ class TelegramSearchTests(unittest.TestCase):
         markup = mock_say.call_args.args[2]
         self.assertIn("1920x1080 / 8.0Mbps", markup[0][0]["text"])
         self.assertTrue(markup[0][0]["callback_data"].startswith("editsrc:"))
+
+    def test_edit_series_probes_first_episode_and_retains_full_source(self):
+        item = {
+            "kind": "tv",
+            "name": "Example Series",
+            "full": "Example Series",
+            "year": "2024",
+            "season": 1,
+            "files": [
+                "C:\\media\\tv\\Example Series\\Season 01\\S01E01.strm",
+                "C:\\media\\tv\\Example Series\\Season 01\\S01E02.strm",
+            ],
+        }
+        result = {
+            "name": "Example Series",
+            "full": "Example Series",
+            "season": 1,
+            "explicit": True,
+            "year": "2024",
+            "kind": "tv",
+            "lines": [{
+                "label": "Source/线路一",
+                "eps": [
+                    ("第1集", "https://media.example/ep1.m3u8"),
+                    ("第2集", "https://media.example/ep2.m3u8"),
+                ],
+            }],
+        }
+        previous_pending = telegram_bot.pending_actions.copy()
+        telegram_bot.pending_actions.clear()
+        try:
+            with patch.object(telegram_bot, "candidates", return_value=[result]), patch.object(
+                telegram_bot.probe, "rank", side_effect=lambda lines, _log: lines
+            ) as mock_rank, patch.object(telegram_bot, "say"):
+                telegram_bot.show_edit_sources(123, item)
+
+            ranked_candidates = mock_rank.call_args.args[0]
+            self.assertEqual(
+                ranked_candidates[0]["eps"],
+                [("第1集", "https://media.example/ep1.m3u8")],
+            )
+            self.assertEqual(
+                ranked_candidates[0]["series_eps"],
+                [
+                    ("第1集", "https://media.example/ep1.m3u8"),
+                    ("第2集", "https://media.example/ep2.m3u8"),
+                ],
+            )
+            self.assertEqual(
+                telegram_bot.pending_actions[123]["lines"][0]["series_eps"],
+                ranked_candidates[0]["series_eps"],
+            )
+        finally:
+            telegram_bot.pending_actions.clear()
+            telegram_bot.pending_actions.update(previous_pending)
 
     def test_help_lists_delete_and_edit_commands(self):
         original_allowed = telegram_bot.ALLOWED

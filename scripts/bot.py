@@ -360,12 +360,19 @@ def show_edit_sources(chat, item):
         ):
             continue
         for line in result["lines"]:
-            if item["kind"] == "tv" and len(line["eps"]) != len(item["files"]):
-                continue
+            episode_urls = line["eps"]
+            if item["kind"] == "tv":
+                if len(episode_urls) != len(item["files"]):
+                    continue
+                choice_eps = episode_urls[:1]
+            else:
+                choice_eps = episode_urls
             if item["kind"] == "movie" and not line["eps"]:
                 continue
             choice = {
                 **line,
+                "eps": choice_eps,
+                "series_eps": episode_urls if item["kind"] == "tv" else None,
                 "name": result["name"],
                 "full": result["full"],
                 "season": result["season"],
@@ -403,7 +410,8 @@ def show_edit_sources(chat, item):
 
 
 def update_item_source(item, line):
-    urls = [url for _name, url in line["eps"]]
+    episode_urls = line.get("series_eps") or line["eps"]
+    urls = [url for _name, url in episode_urls]
     if item["kind"] == "movie":
         if not urls:
             raise ValueError("所选线路没有可写入的播放地址")
