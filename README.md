@@ -369,46 +369,7 @@ Telegram、`auto.py` 和 `crawl.py` 查找播放链接时，都会使用 DecoTV 
 
 获取 Chat ID 时，可先向机器人发送一条消息，再通过 Telegram Bot API 的 `getUpdates` 响应读取 `message.chat.id`。Bot Token 是密码，不要把带 Token 的 API URL、终端输出或截图分享给他人；配置完授权 ID 后不要再公开 Token。
 
-## 10. 迁移现有部署
-
-迁移前先停止旧版 cron/systemd 任务和机器人，避免新旧环境同时写入状态文件；保留一份完整备份。将数据复制到新部署目录：
-
-| 原路径 | 新路径 |
-|---|---|
-| `/opt/m3u/config.json` | `data/manager/config.json` |
-| `/opt/m3u/crawl_state.json`、`state.json`、`health.json`、`stats_snapshot.json` | `data/manager/` |
-| DecoTV Redis 数据目录 | `data/redis/` |
-| Jellyfin `config/` | `data/jellyfin/config/` |
-| Jellyfin `cache/` | `data/jellyfin/cache/` |
-| 电影 STRM 文件 | `/media/movies/` |
-| 剧集 STRM 文件 | `/media/shows/` |
-
-如果当前 STRM 文件还在部署目录的 `data/media/` 下，先停止抓取任务并把已有文件复制到新位置。旧剧集目录可能叫 `tv` 或 `shows`，按实际存在的目录复制：
-
-```bash
-mkdir -p /media/movies /media/shows
-[ ! -d /opt/strm-manager/data/media/movies ] || \
-  cp -a /opt/strm-manager/data/media/movies/. /media/movies/
-if [ -d /opt/strm-manager/data/media/tv ]; then
-  cp -a /opt/strm-manager/data/media/tv/. /media/shows/
-elif [ -d /opt/strm-manager/data/media/shows ]; then
-  cp -a /opt/strm-manager/data/media/shows/. /media/shows/
-fi
-```
-
-复制后更新 Compose 文件并重建两个使用媒体目录的容器：
-
-```bash
-cd /opt/strm-manager
-curl -fsSLo compose.yaml \
-  https://raw.githubusercontent.com/catmaple/strm-manager/main/compose.yaml
-docker compose config -q
-docker compose up -d --force-recreate jellyfin strm-manager
-```
-
-确认文件已复制且目录权限正确后，再检查 `/media/movies`、`/media/shows` 中的 STRM 文件，并在 Jellyfin 中扫描媒体库。迁移的 `config.json` 中，DecoTV 和 Jellyfin 地址需使用 `http://decotv:3000` 与 `http://jellyfin:8096`。迁移期间不要删除旧目录或备份；确认新环境完成抓取、扫描和客户端播放后，再清理旧数据。
-
-## 11. 更新、版本固定与源码构建
+## 10. 更新、版本固定与源码构建
 
 发布新代码后，更新 Compose 并拉取新镜像：
 
@@ -440,7 +401,7 @@ cp .env.example .env
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ```
 
-## 12. 故障排查与已知限制
+## 11. 故障排查与已知限制
 
 | 现象 | 检查方式 |
 |---|---|

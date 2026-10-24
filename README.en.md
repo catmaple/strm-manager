@@ -333,45 +333,6 @@ Telegram, `auto.py`, and `crawl.py` use an authenticated DecoTV administrator se
 
 To obtain your Chat ID, send a message to the bot and read `message.chat.id` from the Telegram Bot API `getUpdates` response. Treat the Bot Token like a password. Never share API URLs containing the token, terminal output, or screenshots that expose it.
 
-## Migrate an existing installation
-
-Before migrating, stop the old cron/systemd jobs and bot to prevent old and new instances from writing to the same state files. Back up the full installation first.
-
-| Existing data | New location |
-|---|---|
-| `/opt/m3u/config.json` | `data/manager/config.json` |
-| `/opt/m3u/crawl_state.json`, `state.json`, `health.json`, `stats_snapshot.json` | `data/manager/` |
-| DecoTV Redis data | `data/redis/` |
-| Jellyfin `config/` | `data/jellyfin/config/` |
-| Jellyfin `cache/` | `data/jellyfin/cache/` |
-| Movie STRM files | `/media/movies/` |
-| TV STRM files | `/media/shows/` |
-
-If STRM files currently live under `/opt/strm-manager/data/media/`, stop crawling and copy them to the new media locations first. The legacy TV directory may be named `tv` or `shows`:
-
-```bash
-mkdir -p /media/movies /media/shows
-[ ! -d /opt/strm-manager/data/media/movies ] || \
-  cp -a /opt/strm-manager/data/media/movies/. /media/movies/
-if [ -d /opt/strm-manager/data/media/tv ]; then
-  cp -a /opt/strm-manager/data/media/tv/. /media/shows/
-elif [ -d /opt/strm-manager/data/media/shows ]; then
-  cp -a /opt/strm-manager/data/media/shows/. /media/shows/
-fi
-```
-
-After copying, update Compose and recreate the containers that use the media mounts:
-
-```bash
-cd /opt/strm-manager
-curl -fsSLo compose.yaml \
-  https://raw.githubusercontent.com/catmaple/strm-manager/main/compose.yaml
-docker compose config -q
-docker compose up -d --force-recreate jellyfin strm-manager
-```
-
-Verify the STRM files, permissions, Jellyfin library scan, and client playback before deleting any old data or backups. In the migrated configuration, use `http://decotv:3000` and `http://jellyfin:8096` for service URLs.
-
 ## Update and build from source
 
 To update a published deployment:
