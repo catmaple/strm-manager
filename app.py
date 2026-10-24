@@ -48,9 +48,9 @@ app.config.update(
     MAX_CONTENT_LENGTH=1024 * 1024,
 )
 
-SECRET_KEYS = {"password", "token", "cookie", "api_key"}
+SECRET_KEYS = {"password", "admin_password", "token", "cookie", "api_key"}
 SECRET_MASK = "********"
-EXPECTED_OBJECTS = {"login", "jellyfin", "telegram", "recheck", "crawl", "decotv", "scheduler"}
+EXPECTED_OBJECTS = {"jellyfin", "telegram", "recheck", "crawl", "decotv", "scheduler"}
 EXPECTED_LISTS = {"list_urls", "cms_apis"}
 CRAWL_SKIP_REMARK_OPTIONS = [
     ("TC", "TC（枪版）"),
@@ -146,20 +146,16 @@ def validate_config(config):
                 raise ValueError(f"{key} 必须是数字")
             if not minimum <= value <= maximum:
                 raise ValueError(f"{key} 必须在 {minimum} 到 {maximum} 之间")
-    if "login" in config and isinstance(config["login"], dict):
-        for key in ("url", "username", "password"):
-            value = config["login"].get(key)
-            if value is not None and not isinstance(value, str):
-                raise ValueError(f"login.{key} 必须是字符串")
     if "jellyfin" in config and isinstance(config["jellyfin"], dict):
         for key in ("url", "api_key"):
             value = config["jellyfin"].get(key)
             if value is not None and not isinstance(value, str):
                 raise ValueError(f"jellyfin.{key} 必须是字符串")
     if "decotv" in config and isinstance(config["decotv"], dict):
-        value = config["decotv"].get("url")
-        if value is not None and not isinstance(value, str):
-            raise ValueError("decotv.url 必须是字符串")
+        for key in ("url", "admin_username", "admin_password"):
+            value = config["decotv"].get(key)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"decotv.{key} 必须是字符串")
     if "telegram" in config and isinstance(config["telegram"], dict):
         token = config["telegram"].get("token")
         if token is not None and not isinstance(token, str):
@@ -454,12 +450,11 @@ def fetch_decotv_sources(config):
         "",
         "",
     ))
-    username = os.environ.get("DECOTV_USERNAME", "").strip()
-    password = os.environ.get("DECOTV_PASSWORD", "")
+    username = ((config.get("decotv") or {}).get("admin_username") or "").strip()
+    password = (config.get("decotv") or {}).get("admin_password", "")
     if not username or not password:
         raise ValueError(
-            "未配置 DecoTV 管理员凭证；请在 .env 中设置 DECOTV_USERNAME 和 "
-            "DECOTV_PASSWORD，并重建 STRM Manager 容器。"
+            "未配置 DecoTV 管理员凭证；请在管理界面的 DecoTV 管理员账号和密码中设置。"
         )
 
     login_url = base_url + "/api/login"
@@ -554,11 +549,8 @@ def config_from_form(form):
     config = {
         "decotv": {
             "url": form.get("decotv_url", ""),
-        },
-        "login": {
-            "url": form.get("login_url", ""),
-            "username": form.get("login_username", ""),
-            "password": parse_form_secret(form, "login_password"),
+            "admin_username": form.get("decotv_admin_username", "").strip(),
+            "admin_password": parse_form_secret(form, "decotv_admin_password"),
         },
         "cms_apis": parse_form_json_list(form.get("cms_apis", "")),
         "max_new_per_run": parse_form_int(form.get("max_new_per_run", ""), 0, 100000),
@@ -663,10 +655,10 @@ def test_service_connections(config):
     results = []
     decotv_url = (config.get("decotv", {}).get("url") or "http://decotv:3000").rstrip("/")
     jellyfin_url = (config.get("jellyfin", {}).get("url") or "http://jellyfin:8096").rstrip("/")
-    login = config.get("login") or {}
-    login_url = (login.get("url") or decotv_url).rstrip("/")
-    username = login.get("username", "")
-    password = login.get("password", "")
+    decotv_config = config.get("decotv") or {}
+    login_url = decotv_url + "/api/login"
+    username = (decotv_config.get("admin_username") or "").strip()
+    password = decotv_config.get("admin_password", "")
 
     if decotv_url:
         results.append(f"DecoTV：{http_status(decotv_url + '/')}" )
@@ -849,6 +841,7 @@ def index():
             else:
                 submitted = config_from_form(request.form)
             merged = merge_config(current, submitted)
+            merged.pop("login", None)
             validate_config(merged)
             updated = restore_blank_secrets(merged, current)
             validate_config(updated)

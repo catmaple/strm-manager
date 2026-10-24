@@ -11,12 +11,6 @@ import app as manager
 
 class ConfigWebTests(unittest.TestCase):
     def setUp(self):
-        env_patch = patch.dict(
-            os.environ,
-            {"DECOTV_USERNAME": "admin", "DECOTV_PASSWORD": "decotv-admin-secret"},
-        )
-        env_patch.start()
-        self.addCleanup(env_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.data_dir = Path(self.temp.name)
         self.config_path = self.data_dir / "config.json"
@@ -29,8 +23,12 @@ class ConfigWebTests(unittest.TestCase):
         manager.app.secret_key = "unit-test-session-secret"
         self.initial = {
             "cookie": "cookie-secret",
-            "decotv": {"url": "http://decotv:3000"},
-            "login": {"username": "script", "password": "login-secret"},
+            "decotv": {
+                "url": "http://decotv:3000",
+                "admin_username": "admin",
+                "admin_password": "decotv-admin-secret",
+            },
+            "login": {"username": "legacy-script-user", "password": "legacy-script-secret"},
             "jellyfin": {"url": "http://jellyfin:8096", "api_key": "jellyfin-secret"},
             "telegram": {"token": "telegram-secret", "allowed_chat_ids": [123]},
             "cms_apis": ["https://example.invalid/api"],
@@ -88,14 +86,29 @@ class ConfigWebTests(unittest.TestCase):
         response = self.client.get("/")
         body = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
-        for secret in ("cookie-secret", "login-secret", "jellyfin-secret", "telegram-secret"):
+        for secret in (
+            "cookie-secret",
+            "decotv-admin-secret",
+            "legacy-script-secret",
+            "jellyfin-secret",
+            "telegram-secret",
+        ):
             self.assertNotIn(secret, body)
         self.assertIn("unknown_option", body)
-        for field in ("login_password", "jellyfin_api_key", "telegram_token"):
+        for field in (
+            "decotv_admin_password",
+            "jellyfin_api_key",
+            "telegram_token",
+        ):
             self.assertRegex(
                 body,
                 rf'<input id="{field}"[^>]*value="{re.escape(manager.SECRET_MASK)}"',
             )
+        self.assertRegex(
+            body,
+            r'<input id="decotv_admin_username"[^>]*value="admin"[^>]*required',
+        )
+        self.assertIn("DecoTV 管理员密码", body)
         self.assertNotIn('id="cookie"', body)
         self.assertIn('id="config-view"', body)
         self.assertIn("unknown_option", body)
@@ -113,6 +126,8 @@ class ConfigWebTests(unittest.TestCase):
         self.assertIn("选择视频源（来自 DecoTV）", body)
         self.assertIn('id="decotvSourceSelect"', body)
         self.assertIn('id="sourceConfigWarning"', body)
+        self.assertNotIn("sourceDebug", body)
+        self.assertNotIn("调试请求信息", body)
         self.assertIn("请先到 DecoTV 设置并启用视频源", body)
         self.assertIn("否则 STRM Manager 无法抓取到可供 Jellyfin 播放的视频", body)
         self.assertIn('id="saveConfigButton" type="submit"', body)
@@ -178,6 +193,22 @@ class ConfigWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(saved["telegram"]["allowed_chat_ids"], [123, -456])
 
+    def test_save_decotv_admin_credentials(self):
+        self.authenticate()
+        response = self.client.post(
+            "/",
+            data={
+                "csrf_token": "test-csrf",
+                "decotv_url": "http://decotv:3000",
+                "decotv_admin_username": "deco-admin",
+                "decotv_admin_password": "new-admin-secret",
+            },
+        )
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(saved["decotv"]["admin_username"], "deco-admin")
+        self.assertEqual(saved["decotv"]["admin_password"], "new-admin-secret")
+
     def test_hidden_list_urls_are_preserved_by_form_submission(self):
         submitted = manager.config_from_form({})
         merged = manager.merge_config(self.initial, submitted)
@@ -185,13 +216,11 @@ class ConfigWebTests(unittest.TestCase):
 
     def test_form_masks_keep_existing_secrets(self):
         parsed = manager.config_from_form({
-            "cookie": manager.SECRET_MASK,
-            "login_password": manager.SECRET_MASK,
+            "decotv_admin_password": manager.SECRET_MASK,
             "jellyfin_api_key": manager.SECRET_MASK,
             "telegram_token": manager.SECRET_MASK,
         })
-        self.assertNotIn("cookie", parsed)
-        self.assertEqual(parsed["login"]["password"], "")
+        self.assertEqual(parsed["decotv"]["admin_password"], "")
         self.assertEqual(parsed["jellyfin"]["api_key"], "")
         self.assertEqual(parsed["telegram"]["token"], "")
 
@@ -388,10 +417,19 @@ class ConfigWebTests(unittest.TestCase):
         self.assertIn("DecoTV 管理员登录失败：HTTP 401", response.json["message"])
         self.assertIn("管理员账号和密码", response.json["message"])
 
-    def test_fetch_decotv_sources_requires_admin_password(self):
-        with patch.dict(os.environ, {"DECOTV_USERNAME": "admin", "DECOTV_PASSWORD": ""}):
-            with self.assertRaisesRegex(ValueError, "DECOTV_USERNAME 和 DECOTV_PASSWORD"):
-                manager.fetch_decotv_sources({})
+    def test_fetch_decotv_sources_requires_password_in_config(self):
+        with self.assertRaisesRegex(ValueError, "管理界面的 DecoTV 管理员账号和密码"):
+            manager.fetch_decotv_sources({
+                "decotv": {"url": "http://decotv:3000"},
+                "login": {"username": "admin", "password": "script-password"},
+            })
+
+    def test_admin_password_is_hidden_in_config_view(self):
+        hidden = manager.hide_secrets({
+            "decotv": {"admin_username": "admin", "admin_password": "secret"},
+        })
+        self.assertEqual(hidden["decotv"]["admin_password"], manager.SECRET_MASK)
+        self.assertEqual(hidden["decotv"]["admin_username"], "admin")
 
     def test_scheduler_form_parses_schedule_settings(self):
         parsed = manager.config_from_form({
@@ -475,7 +513,6 @@ class ConfigWebTests(unittest.TestCase):
         submitted = {
             **self.initial,
             "cookie": "",
-            "login": {"username": "script", "password": ""},
             "jellyfin": {"url": "http://jellyfin:8096", "api_key": ""},
             "telegram": {"token": "", "allowed_chat_ids": [123]},
             "max_new_per_run": 45,
@@ -487,7 +524,8 @@ class ConfigWebTests(unittest.TestCase):
         saved = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(saved["cookie"], "cookie-secret")
-        self.assertEqual(saved["login"]["password"], "login-secret")
+        self.assertEqual(saved["decotv"]["admin_password"], "decotv-admin-secret")
+        self.assertNotIn("login", saved)
         self.assertEqual(saved["jellyfin"]["api_key"], "jellyfin-secret")
         self.assertEqual(saved["telegram"]["token"], "telegram-secret")
         self.assertEqual(saved["max_new_per_run"], 45)

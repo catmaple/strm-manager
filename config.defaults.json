@@ -7,12 +7,9 @@
   ],
   "cookie": "",
   "decotv": {
-    "url": "http://decotv:3000"
-  },
-  "login": {
-    "url": "http://decotv:3000/api/login",
-    "username": "",
-    "password": ""
+    "url": "http://decotv:3000",
+    "admin_username": "admin",
+    "admin_password": ""
   },
   "cms_apis": [],
   "max_new_per_run": 30,

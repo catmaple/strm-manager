@@ -84,32 +84,27 @@
               <option value="">正在从 DecoTV 同步视频源…</option>
             </select>
             <input id="cms_apis" name="cms_apis" type="hidden" value="{{ (config.get('cms_apis') or []) | tojson | forceescape }}">
-            <div id="sourceDebug" class="debug-panel" hidden>
-              <strong>调试请求信息</strong>
-              <pre id="sourceDebugContent"></pre>
-            </div>
             <div id="cmsPreview" class="preview-box" aria-live="polite">等待生成预览…</div>
           </div>
         </div>
 
-        <h3>认证与服务地址</h3>
+        <h3>DecoTV 管理员账号与服务地址</h3>
         <div class="form-grid">
           <div class="field">
             <label for="decotv_url">DecoTV URL</label>
             <input id="decotv_url" name="decotv_url" type="text" value="{{ config.get('decotv', {}).get('url', '') }}">
           </div>
           <div class="field">
-            <label for="login_url">DecoTV 登录 URL</label>
-            <input id="login_url" name="login_url" type="text" value="{{ config.get('login', {}).get('url', '') }}">
+            <label for="decotv_admin_username">DecoTV 管理员用户名</label>
+            <input id="decotv_admin_username" name="decotv_admin_username" type="text" value="{{ config.get('decotv', {}).get('admin_username') or 'admin' }}" autocomplete="username" required>
           </div>
           <div class="field">
-            <label for="login_username">DecoTV 登录用户名</label>
-            <input id="login_username" name="login_username" type="text" value="{{ config.get('login', {}).get('username', '') }}">
+            <label for="decotv_admin_password">DecoTV 管理员密码</label>
+            <input id="decotv_admin_password" name="decotv_admin_password" type="password" value="{{ '********' if config.get('decotv', {}).get('admin_password') else '' }}" placeholder="{{ '已配置，留空表示保留原值' if config.get('decotv', {}).get('admin_password') else '必填：请输入 DecoTV 管理员密码' }}" autocomplete="new-password" required>
           </div>
-          <div class="field">
-            <label for="login_password">DecoTV 登录密码</label>
-            <input id="login_password" name="login_password" type="password" value="{{ '********' if config.get('login', {}).get('password') else '' }}" placeholder="{{ '已配置，留空表示保留原值' if config.get('login', {}).get('password') else '尚未配置' }}" autocomplete="off">
-          </div>
+        </div>
+
+        <div class="form-grid">
           <div class="field">
             <label for="jellyfin_url">Jellyfin URL</label>
             <input id="jellyfin_url" name="jellyfin_url" type="text" value="{{ config.get('jellyfin', {}).get('url', '') }}">
@@ -347,8 +342,6 @@
       const sourcesField = document.getElementById("crawl_sources");
       const sourceStatus = document.getElementById("decotvSourceStatus");
       const sourceWarning = document.getElementById("sourceConfigWarning");
-      const sourceDebug = document.getElementById("sourceDebug");
-      const sourceDebugContent = document.getElementById("sourceDebugContent");
       const saveButton = document.getElementById("saveConfigButton");
       const formatBtn = document.getElementById("format-json");
       const csrfToken = "{{ csrf_token() }}";
@@ -460,14 +453,9 @@
           });
       }
 
-      function showSourceLoadFailure(message, extraInfo) {
+      function showSourceLoadFailure(message) {
         if (sourceWarning) sourceWarning.hidden = false;
         if (sourceStatus) sourceStatus.textContent = window.strmTranslate(message);
-        if (sourceDebug && sourceDebugContent) {
-          const body = extraInfo ? `${message}\n\n--- DEBUG ---\n${extraInfo}` : message;
-          sourceDebugContent.textContent = body;
-          sourceDebug.hidden = false;
-        }
         sourceSelect.replaceChildren();
         const option = document.createElement("option");
         option.value = "";
@@ -495,23 +483,17 @@
             try {
               payload = await response.json();
             } catch (error) {
-              payload = { message: await response.text().catch(() => ""), sources: [] };
+              payload = {};
             }
-            return { status: response.status, data: payload, headers: Object.fromEntries(response.headers.entries()) };
+            return { status: response.status, data: payload };
           })
-          .then(({ status, data, headers }) => {
-            const debugText = [
-              `URL: {{ url_for('decotv_sources_api') }}`,
-              `HTTP status: ${status}`,
-              `Headers: ${JSON.stringify(headers, null, 2)}`,
-              `Response body: ${JSON.stringify(data, null, 2)}`,
-            ].join("\n\n");
+          .then(({ status, data }) => {
             if (status >= 400) {
-              showSourceLoadFailure(data.message || "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。", debugText);
+              showSourceLoadFailure(data.message || "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
               return;
             }
             if (!Array.isArray(data.sources)) {
-              showSourceLoadFailure("无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。", debugText);
+              showSourceLoadFailure(data.message || "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
               return;
             }
             const previouslySelected = parseCmsApis()[0];
@@ -528,29 +510,16 @@
                   data.message || "DecoTV 中没有可用视频源，请先在 DecoTV 中设置视频源。"
                 );
               }
-              if (sourceDebug && sourceDebugContent) {
-                sourceDebugContent.textContent = debugText;
-                sourceDebug.hidden = false;
-              }
               return triggerPreview();
             }
             if (sourceWarning) sourceWarning.hidden = true;
             if (sourceStatus) {
               sourceStatus.textContent = window.strmTranslate("已从 DecoTV 同步视频源。");
             }
-            if (sourceDebug && sourceDebugContent) {
-              sourceDebugContent.textContent = debugText;
-              sourceDebug.hidden = true;
-            }
             return triggerPreview();
           })
-          .catch((error) => {
-            const debugText = [
-              `URL: {{ url_for('decotv_sources_api') }}`,
-              `Error: ${error && error.message ? error.message : String(error)}`,
-              `Stack: ${error && error.stack ? error.stack : ""}`,
-            ].join("\n\n");
-            showSourceLoadFailure("无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。", debugText);
+          .catch(() => {
+            showSourceLoadFailure("无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
           })
           .finally(() => {
             window.clearTimeout(timeoutId);

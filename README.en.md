@@ -70,7 +70,7 @@ Replace every `CHANGE_ME` value. Do not reuse the DecoTV password as the STRM Ma
 | `STRM_PORT` | Host port for the console; default `8080` |
 | `STRM_HOST_BIND` | Host interface for the console; default `0.0.0.0`, use `127.0.0.1` for local-only access |
 | `TZ` | Container time zone; default `Asia/Shanghai` |
-| `DECOTV_USERNAME` / `DECOTV_PASSWORD` | DecoTV administrator credentials used to initialize DecoTV and let STRM Manager sign in to read source configuration |
+| `DECOTV_USERNAME` / `DECOTV_PASSWORD` | DecoTV administrator credentials used to initialize the service; set STRM Manager's source-sync credentials in its DecoTV administrator fields in the web console |
 | `STRM_MANAGER_IMAGE` / `JELLYFIN_IMAGE` | Image references; default to the published GHCR `latest` images |
 
 Keep `.env` private and out of public repositories. Avoid unescaped `$` characters in values because Docker Compose performs variable interpolation.
@@ -162,7 +162,7 @@ Redis should return `PONG`; Jellyfin's health endpoint should return HTTP succes
 Open `http://SERVER_IP:3000/login` and sign in with `DECOTV_USERNAME` and `DECOTV_PASSWORD` from `.env`.
 
 1. Configure and verify the video sources in DecoTV.
-2. Create a regular DecoTV account for the scripts (for example, `script`). Do not use the administrator account in the script configuration.
+2. Verify the DecoTV administrator can access its admin configuration and configured sources. STRM Manager uses this one administrator account for source syncing and crawling; no separate script account is needed.
 3. Verify source browsing, search, and playback.
 4. If DecoTV is expected to use Redis, confirm its administration page does not report local-storage mode and inspect `data/redis/`.
 
@@ -218,12 +218,9 @@ The web form manages the existing `config.json` format. Use Docker service names
 ```json
 {
   "decotv": {
-    "url": "http://decotv:3000"
-  },
-  "login": {
-    "url": "http://decotv:3000/api/login",
-    "username": "script",
-    "password": "DECO TV SCRIPT ACCOUNT PASSWORD"
+    "url": "http://decotv:3000",
+    "admin_username": "admin",
+    "admin_password": "ENTER THE DECOTV ADMIN PASSWORD IN THE WEB CONSOLE"
   },
   "jellyfin": {
     "url": "http://jellyfin:8096",
@@ -236,7 +233,7 @@ The web form manages the existing `config.json` format. Use Docker service names
 }
 ```
 
-When the console opens, STRM Manager signs in to DecoTV with `DECOTV_USERNAME` and `DECOTV_PASSWORD` from `.env`, syncs all enabled non-adult sources from DecoTV's admin configuration, and previews their categories. The account must have DecoTV administrator privileges; a regular script account cannot read the admin configuration. If authentication fails, verify the credentials in `.env` and recreate the STRM Manager container. If sign-in succeeds but no sources are loaded, configure them in DecoTV first and make sure STRM Manager can reach the configured DecoTV URL. The **Validate and Save** button remains disabled until the source sync finishes. The console also supports scheduled jobs, connection tests, Dry Run, and manual DecoTV default-category scans, source-category scans, source rechecks, and statistics.
+STRM Manager uses one set of DecoTV administrator credentials entered in the web console for both source syncing and crawling logins. The administrator username defaults to `admin`; credentials are stored as `decotv.admin_username` and `decotv.admin_password` in `data/manager/config.json`. No separate script account or second set of DecoTV credentials is needed. Protect `config.json`. If authentication fails, verify the credentials and configured DecoTV URL. If sign-in succeeds but no sources are loaded, configure them in DecoTV first and make sure STRM Manager can reach the configured DecoTV URL. The **Validate and Save** button remains disabled until the source sync finishes. The console also supports scheduled jobs, connection tests, Dry Run, and manual DecoTV default-category scans, source-category scans, source rechecks, and statistics.
 
 Only **Validate and Save** persists the submitted form. Test Connection, Dry Run, and manual job actions do not save pending form edits. Configuration saves keep up to 10 backups. Passwords, Telegram tokens, and Jellyfin API keys are masked; leaving a secret field blank preserves its current value. The full-config viewer also redacts secrets.
 

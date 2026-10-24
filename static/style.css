@@ -201,21 +201,6 @@ button.secondary:hover { background: #edf2f6; }
   border-radius: 10px;
   background: #f8fbff;
 }
-.debug-panel {
-  margin-top: 12px;
-  padding: 12px;
-  border: 1px solid #f0c36d;
-  border-radius: 8px;
-  background: #fffaf0;
-  color: #6b4f0a;
-}
-.debug-panel pre {
-  margin: 8px 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: Consolas, Monaco, monospace;
-  font-size: 12px;
-}
 .results-panel h3 {
   margin: 0 0 10px;
   font-size: 16px;

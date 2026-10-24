@@ -41,17 +41,21 @@ _COOKIE = None
 
 
 def get_cookie():
-    """每次运行登录一次拿新 Cookie;没配置 login 则使用 config 里手填的 cookie。"""
+    """每次运行使用 DecoTV 管理员凭证登录一次拿新 Cookie。"""
     global _COOKIE
     if _COOKIE is not None:
         return _COOKIE
-    lg = cfg.get("login")
-    if not lg:
+    decotv = cfg.get("decotv", {})
+    username = decotv.get("admin_username", "")
+    password = decotv.get("admin_password", "")
+    if not username or not password:
         _COOKIE = cfg.get("cookie", "")
+        log("警告:未配置 DecoTV 管理员凭证，使用 config.json cookie")
         return _COOKIE
-    body = json.dumps({"username": lg.get("username", ""), "password": lg["password"]}).encode()
+    login_url = decotv.get("url", "http://decotv:3000").rstrip("/") + "/api/login"
+    body = json.dumps({"username": username, "password": password}).encode()
     req = urllib.request.Request(
-        lg["url"], data=body, method="POST",
+        login_url, data=body, method="POST",
         headers={"Content-Type": "application/json", "User-Agent": UA})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
