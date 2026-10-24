@@ -334,6 +334,22 @@ class ConfigWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("/login", response.headers["Location"])
 
+    @patch.object(
+        manager.urllib.request,
+        "urlopen",
+        side_effect=manager.urllib.error.HTTPError(
+            "http://decotv:3000/api/admin/config", 401, "Unauthorized", {}, None
+        ),
+    )
+    def test_decotv_sources_api_explains_upstream_auth_failure(self, _mock_urlopen):
+        self.authenticate()
+
+        response = self.client.get("/api/decotv/sources")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("DecoTV 返回 HTTP 401", response.json["message"])
+        self.assertIn("可能需要登录权限", response.json["message"])
+
     def test_scheduler_form_parses_schedule_settings(self):
         parsed = manager.config_from_form({
             "scheduler_enabled": "on",

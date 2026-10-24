@@ -737,11 +737,39 @@ def decotv_sources_api():
     try:
         config = load_config()
         sources = fetch_decotv_sources(config)
-    except (OSError, urllib.error.URLError, ValueError, json.JSONDecodeError) as error:
+    except urllib.error.HTTPError as error:
+        if error.code in {401, 403}:
+            message = (
+                f"DecoTV 返回 HTTP {error.code}。"
+                "该管理配置接口可能需要登录权限，请确认 STRM Manager 使用的 DecoTV URL 和访问权限。"
+            )
+        elif error.code == 404:
+            message = "DecoTV 返回 HTTP 404，未找到 /api/admin/config 接口；请检查 DecoTV 地址和版本。"
+        else:
+            message = f"DecoTV 返回 HTTP {error.code}，请检查 DecoTV 服务状态和管理配置接口。"
+        app.logger.warning("Unable to load DecoTV source list: HTTP %s", error.code)
+        return {"sources": [], "message": message}, 502
+    except urllib.error.URLError as error:
+        reason = error.reason
+        if isinstance(reason, (socket.timeout, TimeoutError)):
+            message = "连接 DecoTV 超时，请检查 DecoTV 地址、服务状态及容器网络。"
+            reason_name = "timeout"
+        else:
+            message = "无法连接 DecoTV，请检查配置的 DecoTV URL 和 STRM Manager 容器网络。"
+            reason_name = type(reason).__name__
+        app.logger.warning("Unable to load DecoTV source list: %s", reason_name)
+        return {"sources": [], "message": message}, 502
+    except (OSError, ValueError, json.JSONDecodeError, UnicodeDecodeError) as error:
+        if isinstance(error, (UnicodeDecodeError, json.JSONDecodeError)):
+            message = "DecoTV 配置接口返回的内容不是有效 JSON/UTF-8。"
+        elif isinstance(error, ValueError):
+            message = f"DecoTV 配置响应无效：{error}"
+        else:
+            message = "读取 DecoTV 配置失败，请检查 STRM Manager 日志和数据目录权限。"
         app.logger.warning("Unable to load DecoTV source list: %s", type(error).__name__)
         return {
             "sources": [],
-            "message": "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。",
+            "message": message,
         }, 502
     if not sources:
         return {
