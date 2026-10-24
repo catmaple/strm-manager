@@ -85,11 +85,13 @@ def get_decotv_sources(cookie):
     decotv = cfg.get("decotv", {})
     if not (decotv.get("admin_username") and decotv.get("admin_password")):
         log("未配置 DecoTV 管理员凭证，Telegram 搜索仅使用 config.json 的 cms_apis")
-        return [
+        sources = [
             {"name": urllib.parse.urlparse(api).netloc, "api": api}
             for api in cfg.get("cms_apis", [])
             if isinstance(api, str) and api.strip()
         ]
+        log("Telegram 搜索来源数:", len(sources), "(cms_apis)")
+        return sources
 
     decotv_url = (decotv.get("url") or "http://decotv:3000").rstrip("/")
     try:
@@ -123,6 +125,7 @@ def get_decotv_sources(cookie):
         seen_apis.add(api)
     if not sources:
         raise ValueError("DecoTV 中没有可搜索的已启用非成人视频源")
+    log("Telegram 从 DecoTV 读取到可搜索来源数:", len(sources))
     return sources
 
 
@@ -146,18 +149,26 @@ def candidates(title):
     decotv = cfg.get("decotv", {})
     decotv_url = (decotv.get("url") or "http://decotv:3000").rstrip("/")
     cookie = get_decotv_cookie()
-    for source in get_decotv_sources(cookie):
+    sources = get_decotv_sources(cookie)
+    for source in sources:
         api = source["api"]
         query = urllib.parse.urlencode({"ac": "detail", "wd": tbase})
         target = f"{api}{'&' if '?' in api else '?'}{query}"
         url = decotv_url + "/api/proxy/cms?url=" + urllib.parse.quote(target, safe="")
+        host = urllib.parse.urlparse(api).netloc
+        log("Telegram 搜索来源:", source.get("name") or host, host)
         try:
             data = http_json(url, cookie)
         except Exception as e:
-            log("搜索失败:", api, e)
+            log("搜索失败:", host, type(e).__name__)
             continue
-        host = urllib.parse.urlparse(api).netloc
-        for v in data.get("list", []):
+        items = data.get("list", []) if isinstance(data, dict) else []
+        if not isinstance(items, list):
+            log("CMS 搜索响应格式异常:", host)
+            continue
+        log("CMS 搜索返回记录数:", host, len(items))
+        added_from_source = 0
+        for v in items:
             raw = v.get("vod_name", "")
             tags = raw + (v.get("type_name") or "") + (v.get("vod_remarks") or "")
             if any(k in tags for k in SKIP_WORDS):
@@ -183,6 +194,7 @@ def candidates(title):
                 record_lines.append((ln, eps))
             if not record_lines:
                 continue
+            added_from_source += 1
             kind = seasons.infer_item_kind("movie", raw, v)
             c = out.setdefault((base, sn, vy), {
                 "name": base, "full": seasons.clean(raw), "season": sn,
@@ -207,6 +219,7 @@ def candidates(title):
                 line["eps"].extend(
                     (name, url) for name, url in eps if url not in existing_urls
                 )
+        log("CMS 搜索可用记录数:", host, added_from_source)
     res = list(out.values())
     season_groups = {}
     for c in res:
@@ -385,4 +398,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
