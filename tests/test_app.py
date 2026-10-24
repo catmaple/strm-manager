@@ -96,6 +96,7 @@ class ConfigWebTests(unittest.TestCase):
         self.assertIn('data-language-selector', body)
         self.assertIn("简体中文", body)
         self.assertIn("English", body)
+        self.assertRegex(body, r'<script src="[^"]*i18n\.js"></script>')
         self.assertIn("扫描DecoTV默认分类", body)
         self.assertIn("扫描视频源分类", body)
         self.assertNotIn("自动整理电影分类", body)
