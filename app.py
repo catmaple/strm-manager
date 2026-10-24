@@ -447,19 +447,64 @@ def fetch_decotv_sources(config):
     if parsed_url.username or parsed_url.password:
         raise ValueError("DecoTV URL 不应包含用户名或密码")
 
-    endpoint = urllib.parse.urlunsplit((
+    base_url = urllib.parse.urlunsplit((
         parsed_url.scheme,
         parsed_url.netloc,
-        parsed_url.path.rstrip("/") + "/api/admin/config",
+        parsed_url.path.rstrip("/"),
         "",
         "",
     ))
-    req = urllib.request.Request(
-        endpoint,
-        headers={"Accept": "application/json", "User-Agent": "STRM-Manager/1.0"},
+    username = os.environ.get("DECOTV_USERNAME", "").strip()
+    password = os.environ.get("DECOTV_PASSWORD", "")
+    if not username or not password:
+        raise ValueError(
+            "未配置 DecoTV 管理员凭证；请在 .env 中设置 DECOTV_USERNAME 和 "
+            "DECOTV_PASSWORD，并重建 STRM Manager 容器。"
+        )
+
+    login_url = base_url + "/api/login"
+    login_body = json.dumps(
+        {"username": username, "password": password}
+    ).encode("utf-8")
+    login_request = urllib.request.Request(
+        login_url,
+        data=login_body,
+        method="POST",
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0",
+        },
     )
-    with urllib.request.urlopen(req, timeout=5) as response:
-        content = response.read(2 * 1024 * 1024 + 1)
+    try:
+        with urllib.request.urlopen(login_request, timeout=20) as response:
+            cookies = response.headers.get_all("Set-Cookie") or []
+    except urllib.error.HTTPError as error:
+        raise ValueError(f"DecoTV 管理员登录失败：HTTP {error.code}。请检查管理员账号和密码。") from error
+
+    cookie = "; ".join(
+        part.split(";", 1)[0].strip() for part in cookies if part.split(";", 1)[0].strip()
+    )
+    if not cookie:
+        raise ValueError("DecoTV 登录成功但没有返回 Cookie，无法读取管理员配置。")
+
+    config_url = base_url + "/api/admin/config"
+    config_request = urllib.request.Request(
+        config_url,
+        headers={
+            "Accept": "application/json",
+            "Cookie": cookie,
+            "User-Agent": "Mozilla/5.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(config_request, timeout=20) as response:
+            content = response.read(2 * 1024 * 1024 + 1)
+    except urllib.error.HTTPError as error:
+        raise ValueError(
+            f"DecoTV 管理员登录后读取配置失败：HTTP {error.code}。"
+            "请确认该账号拥有 DecoTV 管理员权限。"
+        ) from error
     if len(content) > 2 * 1024 * 1024:
         raise ValueError("DecoTV 配置响应超过允许大小")
     payload = json.loads(content)
@@ -473,7 +518,11 @@ def fetch_decotv_sources(config):
     sources = []
     seen_apis = set()
     for item in source_config:
-        if not isinstance(item, dict) or item.get("disabled") is True:
+        if (
+            not isinstance(item, dict)
+            or item.get("disabled")
+            or item.get("is_adult")
+        ):
             continue
         api = str(item.get("api") or "").strip()
         api_url = urllib.parse.urlsplit(api)
@@ -737,18 +786,6 @@ def decotv_sources_api():
     try:
         config = load_config()
         sources = fetch_decotv_sources(config)
-    except urllib.error.HTTPError as error:
-        if error.code in {401, 403}:
-            message = (
-                f"DecoTV 返回 HTTP {error.code}。"
-                "该管理配置接口可能需要登录权限，请确认 STRM Manager 使用的 DecoTV URL 和访问权限。"
-            )
-        elif error.code == 404:
-            message = "DecoTV 返回 HTTP 404，未找到 /api/admin/config 接口；请检查 DecoTV 地址和版本。"
-        else:
-            message = f"DecoTV 返回 HTTP {error.code}，请检查 DecoTV 服务状态和管理配置接口。"
-        app.logger.warning("Unable to load DecoTV source list: HTTP %s", error.code)
-        return {"sources": [], "message": message}, 502
     except urllib.error.URLError as error:
         reason = error.reason
         if isinstance(reason, (socket.timeout, TimeoutError)):
@@ -763,7 +800,7 @@ def decotv_sources_api():
         if isinstance(error, (UnicodeDecodeError, json.JSONDecodeError)):
             message = "DecoTV 配置接口返回的内容不是有效 JSON/UTF-8。"
         elif isinstance(error, ValueError):
-            message = f"DecoTV 配置响应无效：{error}"
+            message = str(error)
         else:
             message = "读取 DecoTV 配置失败，请检查 STRM Manager 日志和数据目录权限。"
         app.logger.warning("Unable to load DecoTV source list: %s", type(error).__name__)

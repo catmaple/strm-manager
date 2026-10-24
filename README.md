@@ -85,7 +85,7 @@ printf 'DECOTV_PASSWORD=%s\n' "$(openssl rand -hex 16)"
 | `STRM_PORT` | 管理网页宿主机端口，默认 8080 |
 | `STRM_HOST_BIND` | 管理网页监听地址；默认 `0.0.0.0`，可改为 `127.0.0.1` 只允许本机访问 |
 | `TZ` | 容器时区，默认 `Asia/Shanghai` |
-| `DECOTV_USERNAME` / `DECOTV_PASSWORD` | DecoTV 管理账号 |
+| `DECOTV_USERNAME` / `DECOTV_PASSWORD` | DecoTV 管理员账号；用于初始化 DecoTV 服务及 STRM Manager 登录读取视频源配置 |
 | `STRM_MANAGER_IMAGE` / `JELLYFIN_IMAGE` | 镜像名，默认使用 GHCR 的 `latest` 发布镜像 |
 
 不要把 `.env` 上传到公开仓库或发送给他人。密码尽量避免使用未处理的 `$` 字符，因为 Compose 会对环境变量中的 `$` 做插值。
@@ -276,7 +276,7 @@ docker compose up -d strm-manager
 }
 ```
 
-STRM Manager 会在打开控制台时从 DecoTV 管理配置自动同步所有已启用的视频源，并自动预览分类；控制台不提供手动添加或删除视频源的功能。若未读取到视频源，请先在 DecoTV 管理界面设置来源，并确认 STRM Manager 的 DecoTV URL 可访问。读取完成前“校验并保存”按钮会暂时禁用。表单还支持配置定时任务、测试连接、Dry Run，以及手动运行 DecoTV 默认分类扫描、视频源扫描、线路复测和统计。点击“校验并保存”才会保存配置；测试连接、Dry Run 和立即运行操作不会保存本次表单修改。配置保存时会自动备份，最多保留最近 10 份。密码、Telegram Token 和 Jellyfin API Key 会脱敏；密钥输入框留空表示保留原值。完整 `config.json` 查看窗口也会隐藏敏感值。
+STRM Manager 会使用 `.env` 中的 `DECOTV_USERNAME` 和 `DECOTV_PASSWORD` 登录 DecoTV，再从管理配置自动同步所有已启用的非成人视频源，并自动预览分类；控制台不提供手动添加或删除视频源的功能。该账号必须具有 DecoTV 管理员权限，普通脚本用户无法读取管理配置。若认证失败，请确认 `.env` 中的账号密码正确，并重新创建 STRM Manager 容器。若登录成功但未读取到来源，请先在 DecoTV 管理界面设置来源，并确认 STRM Manager 的 DecoTV URL 可访问。读取完成前“校验并保存”按钮会暂时禁用。表单还支持配置定时任务、测试连接、Dry Run，以及手动运行 DecoTV 默认分类扫描、视频源扫描、线路复测和统计。点击“校验并保存”才会保存配置；测试连接、Dry Run 和立即运行操作不会保存本次表单修改。配置保存时会自动备份，最多保留最近 10 份。密码、Telegram Token 和 Jellyfin API Key 会脱敏；密钥输入框留空表示保留原值。完整 `config.json` 查看窗口也会隐藏敏感值。
 
 网页表单隐藏了部分高级字段（例如 `list_urls`）；这些字段会从当前配置保留，不会因表单保存而被删除。若需修改隐藏字段或清除已保存的密钥，请先备份，再直接编辑 `data/manager/config.json`。
 

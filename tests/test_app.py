@@ -11,6 +11,12 @@ import app as manager
 
 class ConfigWebTests(unittest.TestCase):
     def setUp(self):
+        env_patch = patch.dict(
+            os.environ,
+            {"DECOTV_USERNAME": "admin", "DECOTV_PASSWORD": "decotv-admin-secret"},
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.data_dir = Path(self.temp.name)
         self.config_path = self.data_dir / "config.json"
@@ -23,6 +29,7 @@ class ConfigWebTests(unittest.TestCase):
         manager.app.secret_key = "unit-test-session-secret"
         self.initial = {
             "cookie": "cookie-secret",
+            "decotv": {"url": "http://decotv:3000"},
             "login": {"username": "script", "password": "login-secret"},
             "jellyfin": {"url": "http://jellyfin:8096", "api_key": "jellyfin-secret"},
             "telegram": {"token": "telegram-secret", "allowed_chat_ids": [123]},
@@ -273,12 +280,23 @@ class ConfigWebTests(unittest.TestCase):
     def test_decotv_sources_api_lists_enabled_sources_without_other_config(self, mock_urlopen):
         self.authenticate()
 
-        class FakeResponse:
+        class FakeHeaders:
+            def get_all(self, name):
+                return ["auth=session-cookie; Path=/; HttpOnly"] if name == "Set-Cookie" else []
+
+        class LoginResponse:
+            headers = FakeHeaders()
+
             def __enter__(self):
                 return self
 
             def __exit__(self, *_args):
                 return False
+
+        login_response = LoginResponse()
+
+        class ConfigResponse(LoginResponse):
+            headers = FakeHeaders()
 
             def read(self, _limit):
                 return json.dumps({
@@ -287,6 +305,7 @@ class ConfigWebTests(unittest.TestCase):
                         "SourceConfig": [
                             {"name": "Source One", "api": "https://source.example/api", "disabled": False},
                             {"key": "Disabled", "api": "https://disabled.example/api", "disabled": True},
+                            {"name": "Adult", "api": "https://adult.example/api", "is_adult": True},
                             {"name": "Invalid", "api": "file:///etc/passwd"},
                             {"name": "Duplicate", "api": "https://source.example/api"},
                         ],
@@ -294,7 +313,7 @@ class ConfigWebTests(unittest.TestCase):
                     },
                 }).encode("utf-8")
 
-        mock_urlopen.return_value = FakeResponse()
+        mock_urlopen.side_effect = [login_response, ConfigResponse()]
         response = self.client.get("/api/decotv/sources")
 
         self.assertEqual(response.status_code, 200)
@@ -304,15 +323,34 @@ class ConfigWebTests(unittest.TestCase):
         )
         self.assertNotIn("UserConfig", response.get_data(as_text=True))
         self.assertEqual(
-            mock_urlopen.call_args.args[0].full_url,
+            mock_urlopen.call_args_list[0].args[0].full_url,
+            "http://decotv:3000/api/login",
+        )
+        self.assertEqual(mock_urlopen.call_args_list[0].args[0].get_method(), "POST")
+        self.assertEqual(
+            json.loads(mock_urlopen.call_args_list[0].args[0].data),
+            {"username": "admin", "password": "decotv-admin-secret"},
+        )
+        self.assertEqual(
+            mock_urlopen.call_args_list[1].args[0].full_url,
             "http://decotv:3000/api/admin/config",
+        )
+        self.assertEqual(
+            mock_urlopen.call_args_list[1].args[0].get_header("Cookie"),
+            "auth=session-cookie",
         )
 
     @patch.object(manager.urllib.request, "urlopen")
     def test_decotv_sources_api_prompts_when_no_sources_are_configured(self, mock_urlopen):
         self.authenticate()
 
+        class FakeHeaders:
+            def get_all(self, name):
+                return ["auth=session-cookie; Path=/; HttpOnly"] if name == "Set-Cookie" else []
+
         class FakeResponse:
+            headers = FakeHeaders()
+
             def __enter__(self):
                 return self
 
@@ -322,7 +360,7 @@ class ConfigWebTests(unittest.TestCase):
             def read(self, _limit):
                 return b'{"Config":{"SourceConfig":[]}}'
 
-        mock_urlopen.return_value = FakeResponse()
+        mock_urlopen.side_effect = [FakeResponse(), FakeResponse()]
         response = self.client.get("/api/decotv/sources")
 
         self.assertEqual(response.status_code, 200)
@@ -347,8 +385,13 @@ class ConfigWebTests(unittest.TestCase):
         response = self.client.get("/api/decotv/sources")
 
         self.assertEqual(response.status_code, 502)
-        self.assertIn("DecoTV 返回 HTTP 401", response.json["message"])
-        self.assertIn("可能需要登录权限", response.json["message"])
+        self.assertIn("DecoTV 管理员登录失败：HTTP 401", response.json["message"])
+        self.assertIn("管理员账号和密码", response.json["message"])
+
+    def test_fetch_decotv_sources_requires_admin_password(self):
+        with patch.dict(os.environ, {"DECOTV_USERNAME": "admin", "DECOTV_PASSWORD": ""}):
+            with self.assertRaisesRegex(ValueError, "DECOTV_USERNAME 和 DECOTV_PASSWORD"):
+                manager.fetch_decotv_sources({})
 
     def test_scheduler_form_parses_schedule_settings(self):
         parsed = manager.config_from_form({

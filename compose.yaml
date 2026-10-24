@@ -65,6 +65,8 @@ services:
       STRM_ADMIN_PASSWORD: ${STRM_ADMIN_PASSWORD:?Set STRM_ADMIN_PASSWORD in .env}
       STRM_SESSION_SECRET: ${STRM_SESSION_SECRET:?Set STRM_SESSION_SECRET in .env}
       STRM_DATA_DIR: /data
+      DECOTV_USERNAME: ${DECOTV_USERNAME:?Set DECOTV_USERNAME in .env}
+      DECOTV_PASSWORD: ${DECOTV_PASSWORD:?Set DECOTV_PASSWORD in .env}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - ./data/manager:/data

@@ -70,7 +70,7 @@ Replace every `CHANGE_ME` value. Do not reuse the DecoTV password as the STRM Ma
 | `STRM_PORT` | Host port for the console; default `8080` |
 | `STRM_HOST_BIND` | Host interface for the console; default `0.0.0.0`, use `127.0.0.1` for local-only access |
 | `TZ` | Container time zone; default `Asia/Shanghai` |
-| `DECOTV_USERNAME` / `DECOTV_PASSWORD` | DecoTV administrator credentials |
+| `DECOTV_USERNAME` / `DECOTV_PASSWORD` | DecoTV administrator credentials used to initialize DecoTV and let STRM Manager sign in to read source configuration |
 | `STRM_MANAGER_IMAGE` / `JELLYFIN_IMAGE` | Image references; default to the published GHCR `latest` images |
 
 Keep `.env` private and out of public repositories. Avoid unescaped `$` characters in values because Docker Compose performs variable interpolation.
@@ -236,7 +236,7 @@ The web form manages the existing `config.json` format. Use Docker service names
 }
 ```
 
-When the console opens, STRM Manager automatically syncs all enabled sources from DecoTV's admin configuration and previews their categories. The console does not provide controls to add or remove sources manually. If no sources are loaded, configure them in DecoTV first and make sure STRM Manager can reach the configured DecoTV URL. The **Validate and Save** button remains disabled until the source sync finishes. The console also supports scheduled jobs, connection tests, Dry Run, and manual DecoTV default-category scans, source-category scans, source rechecks, and statistics.
+When the console opens, STRM Manager signs in to DecoTV with `DECOTV_USERNAME` and `DECOTV_PASSWORD` from `.env`, syncs all enabled non-adult sources from DecoTV's admin configuration, and previews their categories. The account must have DecoTV administrator privileges; a regular script account cannot read the admin configuration. If authentication fails, verify the credentials in `.env` and recreate the STRM Manager container. If sign-in succeeds but no sources are loaded, configure them in DecoTV first and make sure STRM Manager can reach the configured DecoTV URL. The **Validate and Save** button remains disabled until the source sync finishes. The console also supports scheduled jobs, connection tests, Dry Run, and manual DecoTV default-category scans, source-category scans, source rechecks, and statistics.
 
 Only **Validate and Save** persists the submitted form. Test Connection, Dry Run, and manual job actions do not save pending form edits. Configuration saves keep up to 10 backups. Passwords, Telegram tokens, and Jellyfin API keys are masked; leaving a secret field blank preserves its current value. The full-config viewer also redacts secrets.
 
