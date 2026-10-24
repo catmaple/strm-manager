@@ -43,6 +43,32 @@ class MediaClassificationTests(unittest.TestCase):
             "tv",
         )
 
+    def test_multiple_playback_urls_without_episode_labels_are_not_tv(self):
+        item = {
+            "type_name": "欧美",
+            "vod_play_url": (
+                "播放1$https://media.example/720p.m3u8#"
+                "播放2$https://media.example/1080p.m3u8"
+            ),
+        }
+        self.assertEqual(
+            seasons.infer_item_kind("movie", "速度与激情 (2001)", item),
+            "movie",
+        )
+
+    def test_episode_labeled_playback_urls_are_tv(self):
+        item = {
+            "type_name": "华语",
+            "vod_play_url": (
+                "第1集$https://media.example/ep1.m3u8#"
+                "第2集$https://media.example/ep2.m3u8"
+            ),
+        }
+        self.assertEqual(
+            seasons.infer_item_kind("movie", "示例剧集", item),
+            "tv",
+        )
+
     @patch.object(reclassify_media, "category_kinds", return_value={"1": "movie"})
     @patch.object(
         reclassify_media,

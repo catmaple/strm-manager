@@ -227,7 +227,6 @@ def candidates(title):
     for c in res:
         if (
             (c["episode_marked"] and c["record_count"] > 1)
-            or any(len(line["eps"]) > 1 for line in c["lines"])
             or len(season_groups[(c["name"], c["year"])]) > 1
         ):
             c["kind"] = "tv"

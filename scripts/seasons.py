@@ -104,8 +104,20 @@ def infer_item_kind(configured_kind, title, item):
         return "tv"
     play_groups = str(item.get("vod_play_url") or "").split("$$$")
     for group in play_groups:
-        episodes = [entry for entry in group.split("#") if "$" in entry]
-        if len(episodes) > 1:
+        episode_names = [
+            entry.split("$", 1)[0].strip()
+            for entry in group.split("#")
+            if "$" in entry
+        ]
+        if any(
+            re.search(
+                r"(?:第\s*[0-9一二三四五六七八九十两]+\s*[集话話期]"
+                r"|(?:EP|E)\s*0*[0-9]+)",
+                name,
+                re.IGNORECASE,
+            )
+            for name in episode_names
+        ):
             return "tv"
     return configured_kind
 

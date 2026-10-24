@@ -170,6 +170,30 @@ class TelegramSearchTests(unittest.TestCase):
 
     @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
     @patch.object(telegram_bot, "http_json")
+    def test_movie_with_multiple_playback_urls_stays_a_movie(
+        self, mock_http_json, _cookie
+    ):
+        self.set_search_responses(mock_http_json, {
+            "list": [{
+                "vod_name": "Example Movie",
+                "vod_year": "2024",
+                "type_name": "欧美",
+                "vod_play_url": (
+                    "播放1$https://media.example/720p.m3u8#"
+                    "播放2$https://media.example/1080p.m3u8"
+                ),
+                "vod_play_from": "线路一",
+            }],
+        })
+
+        results = telegram_bot.candidates("Example Movie")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["kind"], "movie")
+        self.assertIn("电影", telegram_bot.label(results[0]))
+
+    @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
+    @patch.object(telegram_bot, "http_json")
     def test_same_series_with_separate_episode_records_is_merged(
         self, mock_http_json, _cookie
     ):
