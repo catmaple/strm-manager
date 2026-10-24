@@ -317,8 +317,8 @@ To use the Telegram bot, configure `telegram.token` and at least one authorized 
 | Command or action | What it does |
 |---|---|
 | `/stats` or `/status` | Replies with movie/TV counts, crawl progress, source health, disk space, and DecoTV/Jellyfin status. It only reports the current state; it does not update the weekly statistics snapshot. |
-| Type and send a title directly (no `/` command needed), for example `Example Movie` | Searches all enabled, non-adult DecoTV sources through the proxy and returns buttons for available matches. Selecting one tests the routes, chooses a source, creates STRM files, and asks Jellyfin to scan the library. |
-| `/add TITLE` | Searches for a title and adds it directly only when there is a unique match; otherwise, it presents choices. |
+| Type and send a title directly (no `/` command needed), for example `Example Movie` | Searches all enabled, non-adult DecoTV sources through the proxy and returns buttons for available matches. After you select a match, it lists tested routes with resolution, speed, first-byte response time, and source; choose a route to create STRM files and request a Jellyfin library scan. |
+| `/add TITLE` | Searches for a title; skips version selection only when there is a unique match. It always lets you choose the playback route before adding. |
 | `/delete TITLE` | Finds local movie/TV STRMs, asks you to select a target and confirm; it only removes that item's `.strm` files, not posters or other files. |
 | `/edit TITLE` | Finds a local item and searches all available DecoTV sources; lists measured speed and detectable HLS resolution. Selecting a source updates the matching STRM URLs. TV options are limited to sources with the same episode count as the local files. |
 | `/migrate` | Previews migration of legacy TV season folders; click the confirmation button to move files when migration candidates are found. |

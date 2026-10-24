@@ -512,17 +512,47 @@ def refresh_jellyfin():
         return False
 
 
-def do_add(chat, c):
-    say(chat, "正在测速,选择最快的线路……")
-    best = probe.pick(c["lines"], log)
+def do_add(chat, c, line):
     folder, _ = seasons.write_strm({
         "name": c["name"], "full": c["full"], "season": c["season"],
         "explicit": c["explicit"], "year": c["year"], "kind": c["kind"],
-        "eps": best["eps"]})
+        "eps": line["eps"]})
     ok = refresh_jellyfin()
     tail = "已通知 Jellyfin 扫描,稍等一两分钟在 VidHub 里刷新。" if ok \
         else "未配置 Jellyfin api_key,请等它定时扫描或手动扫描。"
-    say(chat, f"✅ 已加入:{label(c)}\n线路:{best.get('label')}({best.get('_info', '')})\n目录:{folder}\n{tail}")
+    say(chat, f"✅ 已加入:{label(c)}\n线路:{line.get('label')}({line.get('_info', '')})\n目录:{folder}\n{tail}")
+
+
+def show_add_sources(chat, c):
+    say(chat, "正在测速可用线路，请稍候……")
+    ranked = probe.rank(c["lines"], log)
+    if not ranked:
+        say(chat, "所有候选线路测速失败，暂不能入库。")
+        return
+    token = secrets.token_hex(4)
+    pending_actions[chat] = {
+        "action": "add",
+        "candidate": c,
+        "lines": ranked,
+        "token": token,
+    }
+    buttons = [
+        [{
+            "text": _add_source_button_label(line),
+            "callback_data": f"addline:{token}:{index}",
+        }]
+        for index, line in enumerate(ranked[:20])
+    ]
+    say(chat, "请选择要入库的播放线路（清晰度、网速、首包响应时间和来源）：", buttons)
+
+
+def _add_source_button_label(line):
+    info = str(line.get("_info") or "测速信息未知")
+    source = str(line.get("label") or "线路")
+    source_limit = max(12, 60 - len(info) - 3)
+    if len(source) > source_limit:
+        source = source[:source_limit - 1] + "…"
+    return f"{info} · {source}"[:60]
 
 
 def search_and_reply(chat, title, direct=False):
@@ -538,7 +568,7 @@ def search_and_reply(chat, title, direct=False):
     tb, ts, _, _ = parse_search_title(title)
     exact = [c for c in cands if c["name"] == tb and c["season"] == ts]
     if direct and len(exact) == 1:
-        do_add(chat, exact[0])
+        show_add_sources(chat, exact[0])
         return
     cache[chat] = cands
     buttons = [[{"text": label(c)[:60], "callback_data": f"add:{i}"}]
@@ -572,9 +602,30 @@ def handle(u):
             cands = cache.get(chat) or []
             i = int(data[4:])
             if i < len(cands):
-                do_add(chat, cands[i])
+                show_add_sources(chat, cands[i])
             else:
                 say(chat, "列表已过期,请重新发送片名搜索。")
+        elif data.startswith("addline:"):
+            pending = pending_actions.get(chat) or {}
+            parts = data.split(":")
+            lines = pending.get("lines") or []
+            try:
+                if (
+                    len(parts) != 3
+                    or pending.get("action") != "add"
+                    or parts[1] != pending.get("token")
+                ):
+                    raise ValueError
+                line = lines[int(parts[2])]
+            except (IndexError, ValueError):
+                say(chat, "线路列表已过期，请重新发送片名搜索。")
+                return
+            try:
+                do_add(chat, pending["candidate"], line)
+            except (KeyError, OSError, ValueError) as error:
+                say(chat, f"入库失败：{error}")
+            finally:
+                pending_actions.pop(chat, None)
         elif data.startswith("delitem:"):
             parts = data.split(":")
             selection = action_cache.get(chat) or {}
@@ -673,8 +724,8 @@ def handle(u):
         say(
             chat,
             "可用功能：\n"
-            "发送片名：搜索 DecoTV 全部已启用来源并选择版本\n"
-            "/add 片名：同名唯一时直接加入，否则显示版本\n"
+            "发送片名：搜索 DecoTV 全部已启用来源，选择版本和播放线路后入库\n"
+            "/add 片名：同名唯一时跳过版本选择，但仍可选择播放线路\n"
             "/delete 片名：删除本地 STRM；选择条目并二次确认\n"
             "/edit 片名：测速可用线路，显示速度/分辨率并切换播放源\n"
             "/migrate：预览并确认迁移旧剧集季目录\n"

@@ -497,6 +497,82 @@ class TelegramSearchTests(unittest.TestCase):
         self.assertIn("1920x1080 / 8.0Mbps", markup[0][0]["text"])
         self.assertTrue(markup[0][0]["callback_data"].startswith("editsrc:"))
 
+    def test_add_flow_shows_measured_routes_and_adds_the_selected_route(self):
+        candidate = {
+            "name": "Example Movie",
+            "full": "Example Movie",
+            "season": 1,
+            "explicit": False,
+            "year": "2024",
+            "kind": "movie",
+            "eps": [("播放", "https://media.example/first.m3u8")],
+            "lines": [
+                {"label": "Source One/线路一", "eps": [("播放", "https://one.example/movie.m3u8")]},
+                {"label": "Source Two/线路二", "eps": [("播放", "https://two.example/movie.m3u8")]},
+            ],
+        }
+        ranked = [
+            {
+                **candidate["lines"][0],
+                "_info": "1080p / 8.0Mbps, 首包0.42s",
+            },
+            {
+                **candidate["lines"][1],
+                "_info": "720p / 5.0Mbps, 首包0.81s",
+            },
+        ]
+        previous_pending = telegram_bot.pending_actions.copy()
+        original_allowed = telegram_bot.ALLOWED
+        telegram_bot.pending_actions.clear()
+        telegram_bot.ALLOWED = {123}
+        try:
+            with patch.object(
+                telegram_bot.probe, "rank", return_value=ranked
+            ), patch.object(telegram_bot, "say") as mock_say:
+                telegram_bot.show_add_sources(123, candidate)
+
+            prompt, buttons = mock_say.call_args.args[1:3]
+            self.assertIn("清晰度", prompt)
+            self.assertIn("首包响应时间", prompt)
+            self.assertIn("Source One", buttons[0][0]["text"])
+            self.assertIn("1080p", buttons[0][0]["text"])
+            self.assertIn("0.42s", buttons[0][0]["text"])
+            self.assertIn("Source Two", buttons[1][0]["text"])
+            callback_data = buttons[1][0]["callback_data"]
+
+            with patch.object(telegram_bot, "tg"), patch.object(
+                telegram_bot, "do_add"
+            ) as mock_do_add:
+                telegram_bot.handle({
+                    "callback_query": {
+                        "id": "route-selection",
+                        "message": {"chat": {"id": 123}},
+                        "data": callback_data,
+                    }
+                })
+
+            mock_do_add.assert_called_once_with(123, candidate, ranked[1])
+            self.assertNotIn(123, telegram_bot.pending_actions)
+        finally:
+            telegram_bot.pending_actions.clear()
+            telegram_bot.pending_actions.update(previous_pending)
+            telegram_bot.ALLOWED = original_allowed
+
+    def test_direct_add_search_still_requires_route_selection(self):
+        candidate = {
+            "name": "Example Movie",
+            "season": 1,
+        }
+        with patch.object(telegram_bot, "candidates", return_value=[candidate]), patch.object(
+            telegram_bot, "show_add_sources"
+        ) as mock_show, patch.object(telegram_bot, "do_add") as mock_do_add, patch.object(
+            telegram_bot, "say"
+        ):
+            telegram_bot.search_and_reply(123, "Example Movie", direct=True)
+
+        mock_show.assert_called_once_with(123, candidate)
+        mock_do_add.assert_not_called()
+
     def test_edit_series_probes_first_episode_and_retains_full_source(self):
         item = {
             "kind": "tv",
