@@ -106,6 +106,103 @@ def parse_search_title(raw):
 
 def candidates(title):
     tbase, tseason, _, _ = parse_search_title(title)
+    decotv = cfg.get("decotv", {})
+    if (decotv.get("admin_username") or "").strip() and decotv.get("admin_password"):
+        return decotv_page_candidates(tbase)
+    return cms_candidates(tbase, tseason)
+
+
+def decotv_page_candidates(title):
+    decotv_url = (cfg.get("decotv", {}).get("url") or "http://decotv:3000").rstrip("/")
+    query = urllib.parse.urlencode({"q": title, "adfilter": "direct"})
+    cookie = get_decotv_cookie()
+    try:
+        payload = http_json(decotv_url + "/api/search?" + query, cookie)
+    except Exception as error:
+        log("DecoTV 聚合搜索失败:", type(error).__name__)
+        raise ValueError("无法读取 DecoTV 聚合搜索结果，请检查管理员凭证和 DecoTV 服务状态") from error
+
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        raise ValueError("DecoTV 聚合搜索返回格式异常")
+
+    results = []
+    seen = set()
+    for item in payload["results"]:
+        if not isinstance(item, dict):
+            continue
+        raw = str(item.get("title") or "").strip()
+        base, item_season, explicit, episode_marked = parse_search_title(raw)
+        source = str(item.get("source") or "").strip()
+        item_id = str(item.get("id") or "").strip()
+        urls = item.get("episodes")
+        episode_identity = (
+            tuple(str(url) for url in urls) if isinstance(urls, list) else ()
+        )
+        identity = (
+            (source, item_id)
+            if source and item_id
+            else (
+                source,
+                seasons.clean(raw).casefold(),
+                str(item.get("year") or ""),
+                episode_identity,
+            )
+        )
+        if not raw or identity in seen:
+            continue
+        seen.add(identity)
+
+        tags = raw + str(item.get("type_name") or "") + str(item.get("remarks") or "")
+        if any(word in tags for word in SKIP_WORDS) or not base:
+            continue
+        if not isinstance(urls, list):
+            continue
+        titles = item.get("episodes_titles")
+        if not isinstance(titles, list):
+            titles = []
+        eps = [
+            (
+                str(titles[index]).strip()
+                if index < len(titles) and titles[index]
+                else str(index + 1),
+                url.strip(),
+            )
+            for index, url in enumerate(urls)
+            if isinstance(url, str) and url.strip() and ".m3u8" in url.lower()
+        ]
+        if not eps:
+            continue
+        year_value = str(item.get("year") or "")
+        year_match = re.search(r"\d{4}", year_value)
+        year = year_match.group(0) if year_match else ""
+        kind = seasons.infer_item_kind(
+            "movie",
+            raw,
+            {
+                "type_name": item.get("type_name"),
+                "vod_remarks": item.get("remarks"),
+                "vod_total": len(eps),
+            },
+        )
+        line_label = str(item.get("source_name") or source or "DecoTV")
+        results.append({
+            "name": base,
+            "full": seasons.clean(raw),
+            "season": item_season,
+            "explicit": explicit,
+            "year": year,
+            "kind": "tv" if kind == "tv" or episode_marked else kind,
+            "lang": item.get("lang") or "",
+            "lines": [{"label": line_label, "eps": eps}],
+            "eps": eps,
+            "source": source,
+            "id": item_id,
+        })
+
+    return results
+
+
+def cms_candidates(tbase, tseason):
     out = {}
     decotv = cfg.get("decotv", {})
     decotv_url = (decotv.get("url") or "http://decotv:3000").rstrip("/")
@@ -177,9 +274,10 @@ def candidates(title):
                     line = {"label": line_label, "eps": []}
                     c["lines"].append(line)
                 existing_urls = {url for _name, url in line["eps"]}
-                line["eps"].extend(
-                    (name, url) for name, url in eps if url not in existing_urls
-                )
+                for episode_name, episode_url in eps:
+                    if episode_url not in existing_urls:
+                        line["eps"].append((episode_name, episode_url))
+                        existing_urls.add(episode_url)
         log("CMS 搜索可用记录数:", host, added_from_source)
     res = list(out.values())
     season_groups = {}
@@ -204,8 +302,20 @@ def label(c):
     kind = f"第{c['season']}季 · {len(c['eps'])}集" if tv else "电影"
     nm = c["name"] if tv else c["full"]
     year = f" ({c['year']})" if c["year"] else ""
-    lang = f" · {c['lang']}" if c["lang"] else ""
+    lang = f" · {c.get('lang')}" if c.get("lang") else ""
     return f"{nm}{year} · {kind}{lang}"
+
+
+def search_result_button_label(candidate):
+    title = label(candidate)
+    lines = candidate.get("lines") or []
+    source = str(lines[0].get("label") or "") if lines else ""
+    if not source:
+        return title[:60]
+    title_limit = max(12, 60 - len(source) - 3)
+    if len(title) > title_limit:
+        title = title[:title_limit - 1] + "…"
+    return f"{title} · {source}"[:60]
 
 
 def find_library_items(title):
@@ -571,7 +681,7 @@ def search_and_reply(chat, title, direct=False):
         show_add_sources(chat, exact[0])
         return
     cache[chat] = cands
-    buttons = [[{"text": label(c)[:60], "callback_data": f"add:{i}"}]
+    buttons = [[{"text": search_result_button_label(c), "callback_data": f"add:{i}"}]
                for i, c in enumerate(cands)]
     say(chat, "请选择要加入的版本:", buttons)
 

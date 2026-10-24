@@ -55,28 +55,38 @@ class DecoTVSearchTests(unittest.TestCase):
             "http://decotv:3000/api/admin/config", "auth=session"
         )
 
-    def test_search_all_queries_each_source_through_decotv_proxy(self):
-        sources = [
-            {"name": "One", "api": "https://one.example/api"},
-            {"name": "Two", "api": "https://two.example/api"},
-        ]
-        http_json = Mock(side_effect=[
-            {"list": [{"vod_name": "Example"}]},
-            {"list": [{"vod_name": "Example"}]},
-        ])
+    def test_search_all_uses_decotv_aggregate_search(self):
+        http_json = Mock(return_value={
+            "results": [
+                {
+                    "title": "Example Show",
+                    "year": "2024",
+                    "type_name": "剧集",
+                    "remarks": "1080P",
+                    "episodes": ["https://one.example/ep1.m3u8", "https://one.example/ep2.m3u8"],
+                    "episodes_titles": ["第1集", "第2集"],
+                    "source": "source-one",
+                    "source_name": "Source One",
+                }
+            ]
+        })
 
         results = decotv_search.search_all(
-            self.config, "Example Show", sources, "auth=session",
+            self.config, "Example Show", [], "auth=session",
             http_json, lambda *_: None,
         )
 
-        self.assertEqual(len(results), 2)
-        self.assertEqual(http_json.call_count, 2)
-        self.assertTrue(all(call.args[1] == "auth=session" for call in http_json.call_args_list))
-        self.assertTrue(all(
-            "/api/proxy/cms?url=" in call.args[0]
-            for call in http_json.call_args_list
-        ))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0][0]["name"], "Source One")
+        self.assertEqual(results[0][1]["vod_name"], "Example Show")
+        self.assertEqual(
+            results[0][1]["vod_play_url"],
+            "第1集$https://one.example/ep1.m3u8#第2集$https://one.example/ep2.m3u8",
+        )
+        http_json.assert_called_once_with(
+            "http://decotv:3000/api/search?q=Example+Show&adfilter=direct",
+            "auth=session",
+        )
 
     def test_missing_admin_credentials_fall_back_to_cms_apis(self):
         config = {"cms_apis": ["https://selected.example/api"]}

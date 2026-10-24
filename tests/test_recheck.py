@@ -41,7 +41,7 @@ class RecheckSourceSearchTests(unittest.TestCase):
         recheck._COOKIE = self.original_cookie
         recheck._SEARCH_SOURCES = self.original_sources
 
-    def test_candidates_searches_enabled_decotv_sources_through_proxy(self):
+    def test_candidates_searches_enabled_decotv_sources_through_aggregate_search(self):
         payloads = [
             {
                 "Config": {
@@ -57,48 +57,44 @@ class RecheckSourceSearchTests(unittest.TestCase):
                 }
             },
             {
-                "list": [{
-                    "vod_name": "Example Series 第2季",
-                    "vod_year": "2024",
-                    "vod_play_url": (
-                        "第1集$https://one.example/ep1.m3u8#"
-                        "第2集$https://one.example/ep2.m3u8"
-                    ),
-                    "vod_play_from": "线路一",
-                }]
-            },
-            {
-                "list": [{
-                    "vod_name": "Unrelated Series 第2季",
-                    "vod_year": "2024",
-                    "vod_play_url": "第1集$https://two.example/ep1.m3u8",
-                    "vod_play_from": "线路二",
+                "results": [{
+                    "title": "Example Series",
+                    "year": "2024",
+                    "type_name": "剧集",
+                    "remarks": "1080P",
+                    "episodes": [
+                        "https://one.example/ep1.m3u8",
+                        "https://one.example/ep2.m3u8",
+                    ],
+                    "episodes_titles": ["第1集", "第2集"],
+                    "source": "source-one",
+                    "source_name": "Source One",
                 }]
             },
         ]
 
         with patch.object(recheck, "http_json", side_effect=payloads) as mock_http_json:
-            found = recheck.candidates("Example Series", "2024", season=2)
+            found = recheck.candidates("Example Series", "2024", season=1)
 
         self.assertEqual(
             found,
             [{
-                "label": "Source One/线路一",
+                "label": "Source One/Source One",
                 "eps": [
                     ("第1集", "https://one.example/ep1.m3u8"),
                     ("第2集", "https://one.example/ep2.m3u8"),
                 ],
             }],
         )
-        self.assertEqual(mock_http_json.call_count, 3)
+        self.assertEqual(mock_http_json.call_count, 2)
         self.assertEqual(
             mock_http_json.call_args_list[0].args,
             ("http://decotv:3000/api/admin/config", "auth=session"),
         )
-        self.assertTrue(all(
-            "/api/proxy/cms?url=" in call.args[0]
-            for call in mock_http_json.call_args_list[1:]
-        ))
+        self.assertEqual(
+            mock_http_json.call_args_list[1].args[0],
+            "http://decotv:3000/api/search?q=Example+Series&adfilter=direct",
+        )
 
 
 if __name__ == "__main__":
