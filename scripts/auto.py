@@ -3,6 +3,7 @@ import os, re, sys, json, time, urllib.request, urllib.parse
 sys.path.insert(0, "/opt/m3u")
 import probe
 import seasons
+import decotv_search
 
 CONFIG = "/opt/m3u/config.json"
 STATE = "/opt/m3u/state.json"
@@ -120,18 +121,11 @@ def get_titles():
     return out
 
 
-def search(api, title, year):
+def search(title, year, sources, cookie):
     base, season, _ = seasons.parse_title(title)
     full = seasons.clean(title)
-    url = f"{api}{'&' if '?' in api else '?'}ac=detail&wd={urllib.parse.quote(base)}"
-    try:
-        data = http_json(url)
-    except Exception as e:
-        log("  搜索失败:", api, e)
-        return []
-    host = urllib.parse.urlparse(api).netloc
-    out = []
-    for v in data.get("list", []):
+    grouped = {}
+    for source, v in decotv_search.search_all(cfg, base, sources, cookie, http_json, log):
         raw = v.get("vod_name", "")
         tags = raw + (v.get("type_name") or "") + (v.get("vod_remarks") or "")
         if any(k in tags for k in SKIP_WORDS):
@@ -144,18 +138,40 @@ def search(api, title, year):
             continue
         groups = v.get("vod_play_url", "").split("$$$")
         froms = v.get("vod_play_from", "").split("$$$")
+        record_lines = []
         for i, g in enumerate(groups):
-            if ".m3u8" not in g:
-                continue
             eps = [e.split("$", 1) for e in g.split("#") if "$" in e]
-            eps = [(n, u.strip()) for n, u in eps if ".m3u8" in u]
+            eps = [(n, u.strip()) for n, u in eps if ".m3u8" in u.lower()]
             if eps:
                 ln = froms[i] if i < len(froms) else f"线路{i}"
-                out.append({"name": b, "full": seasons.clean(raw), "season": sn,
-                            "explicit": explicit, "year": vy if vy.isdigit() else year,
-                            "kind": seasons.infer_item_kind("movie", raw, v),
-                            "eps": eps, "label": f"{host}/{ln}"})
-    return out
+                record_lines.append((f"{source['name']}/{ln}", eps))
+        if not record_lines:
+            continue
+        item_year = vy if vy.isdigit() else year
+        candidate = grouped.setdefault((b, sn, item_year), {
+            "name": b,
+            "full": seasons.clean(raw),
+            "season": sn,
+            "explicit": explicit,
+            "year": item_year,
+            "kind": seasons.infer_item_kind("movie", raw, v),
+            "lines": {},
+        })
+        for line_label, eps in record_lines:
+            line = candidate["lines"].setdefault(
+                line_label, {"label": line_label, "eps": []}
+            )
+            existing_urls = {url for _, url in line["eps"]}
+            line["eps"].extend(
+                (episode_name, url)
+                for episode_name, url in eps
+                if url not in existing_urls
+            )
+    return [
+        {**{key: value for key, value in candidate.items() if key != "lines"}, **line}
+        for candidate in grouped.values()
+        for line in candidate["lines"].values()
+    ]
 
 
 def refresh_jellyfin():
@@ -180,15 +196,32 @@ def main():
     if not titles:
         log("没有取到任何片名,请检查 list_urls 和登录/cookie 配置")
         return
+    cookie = get_cookie()
+    try:
+        sources = decotv_search.get_sources(cfg, cookie, http_json, log)
+    except ValueError as error:
+        log("无法初始化 DecoTV 搜索:", error)
+        return
+    if not sources:
+        log("没有配置可搜索的 DecoTV 来源")
+        return
     added, now, lookups = 0, time.time(), 0
     retry = cfg.get("retry_miss_days", 3) * 86400
+    lookup_version = "decotv-all-sources-v1"
     for title, year in titles:
         if added >= cfg.get("max_new_per_run", 30):
             log("已达到本次新增上限")
             break
         key = f"{title}|{year}"
         st = state.get(key)
-        if st and (st["s"] == "ok" or now - st["t"] < retry):
+        if st and st["s"] == "ok":
+            continue
+        if (
+            st
+            and st["s"] == "miss"
+            and st.get("lookup_version") == lookup_version
+            and now - st["t"] < retry
+        ):
             continue
         if lookups >= cfg.get("max_lookups_per_run", 300):
             log("已达到本次查找上限,剩余的留到下次")
@@ -197,16 +230,13 @@ def main():
         if lookups % 20 == 0 and not DRY:
             json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
         log("查找:", title, year)
-        cands = []
-        for api in cfg["cms_apis"]:
-            cands += search(api, title, year)
-            time.sleep(1)
+        cands = search(title, year, sources, cookie)
         hit = probe.pick(cands, log) if cands else None
         if hit:
             log("  选用线路:", hit.get("label"), "|", hit.get("_info"))
         if not hit:
             log("  未找到")
-            state[key] = {"s": "miss", "t": now}
+            state[key] = {"s": "miss", "t": now, "lookup_version": lookup_version}
             continue
         if DRY:
             log(f"  [dry] 将生成: {hit['full']} ({hit['year']}) {len(hit['eps'])} 个")

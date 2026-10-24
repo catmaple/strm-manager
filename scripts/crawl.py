@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import os, re, sys, json, time, datetime, urllib.request, urllib.parse
 sys.path.insert(0, "/opt/m3u")
+import decotv_search
+import probe
 import seasons
 
 CONFIG = "/opt/m3u/config.json"
@@ -13,6 +15,8 @@ cfg = json.load(open(CONFIG, encoding="utf-8"))
 cc = cfg.get("crawl", {})
 state = json.load(open(STATE, encoding="utf-8")) if os.path.exists(STATE) else {}
 counters = {"added": 0, "pages": 0}
+_SEARCH_SOURCES = None
+_PLAYBACK_CACHE = {}
 
 
 def arg(name, default):
@@ -102,6 +106,77 @@ def pick_eps(v):
     return best
 
 
+def find_playback(raw, year, configured_kind):
+    global _SEARCH_SOURCES
+    base, season, _ = seasons.parse_title(raw)
+    if not base:
+        return None
+    year = str(year or "").strip()
+    cache_key = (base.casefold(), season, year, configured_kind)
+    if cache_key in _PLAYBACK_CACHE:
+        return _PLAYBACK_CACHE[cache_key]
+    cookie = get_cookie()
+    if _SEARCH_SOURCES is None:
+        _SEARCH_SOURCES = decotv_search.get_sources(cfg, cookie, http_json, log)
+    records = decotv_search.search_all(
+        cfg, base, _SEARCH_SOURCES, cookie, http_json, log
+    )
+    candidates = {}
+    for source, item in records:
+        name = item.get("vod_name", "")
+        tags = name + (item.get("type_name") or "") + (item.get("vod_remarks") or "")
+        if any(word in tags for word in SKIP_WORDS):
+            continue
+        item_base, item_season, explicit = seasons.parse_title(name)
+        if item_base.casefold() != base.casefold() or item_season != season:
+            continue
+        item_year = str(item.get("vod_year") or "").strip()
+        item_year = item_year if item_year.isdigit() else ""
+        if year and item_year and abs(int(item_year) - int(year)) > 1:
+            continue
+        for index, group in enumerate(str(item.get("vod_play_url") or "").split("$$$")):
+            episodes = [
+                entry.split("$", 1)
+                for entry in group.split("#")
+                if "$" in entry
+            ]
+            episodes = [
+                (episode_name, url.strip())
+                for episode_name, url in episodes
+                if ".m3u8" in url.lower()
+            ]
+            if not episodes:
+                continue
+            sources = str(item.get("vod_play_from") or "").split("$$$")
+            line_name = sources[index] if index < len(sources) else f"线路{index}"
+            line_label = f"{source['name']}/{line_name}"
+            key = (item_base, item_season, item_year, line_label)
+            candidate = candidates.setdefault(key, {
+                "name": item_base,
+                "full": seasons.clean(name),
+                "season": item_season,
+                "explicit": explicit,
+                "year": item_year or year,
+                "kind": seasons.infer_item_kind(configured_kind, name, item),
+                "label": line_label,
+                "eps": [],
+            })
+            existing_urls = {url for _, url in candidate["eps"]}
+            candidate["eps"].extend(
+                (episode_name, url)
+                for episode_name, url in episodes
+                if url not in existing_urls
+            )
+    choices = list(candidates.values())
+    selected = probe.pick(choices, log) if choices else None
+    _PLAYBACK_CACHE[cache_key] = selected
+    if selected:
+        log("  聚合搜索选用线路:", selected["label"], len(selected["eps"]), "集")
+    else:
+        log("  DecoTV 聚合搜索未找到可用播放源:", raw)
+    return selected
+
+
 def get_score(v):
     """返回评分;没有评分(空、0、无法解析)返回 0.0。"""
     for f in SCORE_FIELDS:
@@ -146,29 +221,36 @@ def process_item(st, kind, v):
     vid = str(v.get("vod_id"))
     prev = st["seen"].get(vid)
     raw = v.get("vod_name", "")
-    eps = pick_eps(v)
-    n = len(eps) if eps else 0
-    mx = cc.get("max_eps", 0)
-    if mx and n > mx and not (prev and prev > 0):
-        st["seen"][vid] = -1
-        return "skipped", prev is None
-    if prev is not None and prev > 0 and not (kind == "tv" and n > prev):
-        return "known", False
     fresh = prev is None
     reason = skip_reason(v, raw)
-    if reason or not eps:
-        st["seen"][vid] = -1 if reason else 0
+    if reason:
+        st["seen"][vid] = -1
         return "skipped", fresh
+    metadata_kind = seasons.infer_item_kind(kind, raw, v)
+    if prev is not None and prev > 0 and metadata_kind != "tv":
+        return "known", False
     base, season, explicit = seasons.parse_title(raw)
     if not base:
         st["seen"][vid] = -1
         return "skipped", fresh
-    item_kind = seasons.infer_item_kind(kind, raw, v)
     year = (v.get("vod_year") or "").strip()
     year = year if year.isdigit() else ""
-    r = {"name": base, "full": seasons.clean(raw), "season": season,
-         "explicit": explicit or item_kind == "tv", "year": year, "eps": eps,
-         "kind": "tv" if explicit or season > 1 else item_kind}
+    playback = find_playback(raw, year, metadata_kind)
+    if not playback:
+        st["seen"][vid] = 0
+        return "skipped", fresh
+    eps = playback["eps"]
+    n = len(eps)
+    mx = cc.get("max_eps", 0)
+    if mx and n > mx and not (prev and prev > 0):
+        st["seen"][vid] = -1
+        return "skipped", fresh
+    item_kind = playback["kind"]
+    if prev is not None and prev > 0 and not (item_kind == "tv" and n > prev):
+        return "known", False
+    r = {"name": playback["name"], "full": playback["full"], "season": playback["season"],
+         "explicit": playback["explicit"] or item_kind == "tv", "year": playback["year"],
+         "eps": eps, "kind": playback["kind"]}
     key = f"{base}|{year}|{season}"
     owner = st["claimed"].get(key)
     if (owner and owner != vid) or (not owner and exists_on_disk(r)):

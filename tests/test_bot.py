@@ -1,5 +1,7 @@
 import json
+import subprocess
 import sys
+import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
@@ -317,6 +319,254 @@ class TelegramSearchTests(unittest.TestCase):
             json.loads(request.data),
             {"username": "admin", "password": "admin-secret"},
         )
+
+    def test_find_library_items_matches_movie_and_season(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            movie_root = root / "movies"
+            tv_root = root / "tv"
+            movie_dir = movie_root / "Example Movie (2024)"
+            movie_dir.mkdir(parents=True)
+            (movie_dir / "Example Movie (2024).strm").write_text(
+                "https://media.example/movie.m3u8\n", encoding="utf-8"
+            )
+            season_dir = tv_root / "Example Series (2023)" / "Season 02"
+            season_dir.mkdir(parents=True)
+            (season_dir / "Example Series S02E01.strm").write_text(
+                "https://media.example/ep1.m3u8\n", encoding="utf-8"
+            )
+
+            with patch.object(telegram_bot.seasons, "MOVIE_ROOT", str(movie_root)), patch.object(
+                telegram_bot.seasons, "TV_ROOT", str(tv_root)
+            ):
+                movie_matches = telegram_bot.find_library_items("Example Movie")
+                tv_matches = telegram_bot.find_library_items("Example Series 第2季")
+
+        self.assertEqual(len(movie_matches), 1)
+        self.assertEqual(movie_matches[0]["kind"], "movie")
+        self.assertEqual(len(tv_matches), 1)
+        self.assertEqual(tv_matches[0]["season"], 2)
+        self.assertEqual(len(tv_matches[0]["files"]), 1)
+
+    def test_delete_item_only_removes_strm_files_and_keeps_library_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            movie_root = root / "movies"
+            movie_dir = movie_root / "Example Movie (2024)"
+            movie_dir.mkdir(parents=True)
+            strm_file = movie_dir / "Example Movie (2024).strm"
+            strm_file.write_text("https://media.example/movie.m3u8\n", encoding="utf-8")
+            other_file = movie_dir / "poster.jpg"
+            other_file.write_bytes(b"poster")
+            item = {
+                "kind": "movie",
+                "path": str(movie_dir),
+                "files": [str(strm_file)],
+            }
+
+            with patch.object(telegram_bot.seasons, "MOVIE_ROOT", str(movie_root)):
+                deleted = telegram_bot.delete_item(item)
+
+            self.assertEqual(deleted, 1)
+            self.assertFalse(strm_file.exists())
+            self.assertTrue(other_file.exists())
+            self.assertTrue(movie_root.exists())
+            self.assertTrue(movie_dir.exists())
+
+    def test_update_item_source_replaces_each_strm_url(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tv_root = root / "tv"
+            season_dir = tv_root / "Example Series" / "Season 01"
+            season_dir.mkdir(parents=True)
+            files = []
+            for episode in (1, 2):
+                path = season_dir / f"Example Series S01E{episode:02d}.strm"
+                path.write_text(f"https://old.example/ep{episode}.m3u8\n", encoding="utf-8")
+                files.append(str(path))
+            item = {"kind": "tv", "files": files}
+            line = {
+                "eps": [
+                    ("第1集", "https://new.example/ep1.m3u8"),
+                    ("第2集", "https://new.example/ep2.m3u8"),
+                ]
+            }
+
+            with patch.object(telegram_bot.seasons, "TV_ROOT", str(tv_root)):
+                count = telegram_bot.update_item_source(item, line)
+
+            self.assertEqual(count, 2)
+            self.assertEqual(
+                [Path(path).read_text(encoding="utf-8").strip() for path in files],
+                ["https://new.example/ep1.m3u8", "https://new.example/ep2.m3u8"],
+            )
+
+    def test_update_item_source_rejects_incomplete_tv_line(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tv_root = root / "tv"
+            season_dir = tv_root / "Example Series" / "Season 01"
+            season_dir.mkdir(parents=True)
+            paths = []
+            for episode in (1, 2):
+                path = season_dir / f"Example Series S01E{episode:02d}.strm"
+                path.write_text("https://old.example/ep.m3u8\n", encoding="utf-8")
+                paths.append(str(path))
+
+            with patch.object(telegram_bot.seasons, "TV_ROOT", str(tv_root)):
+                with self.assertRaisesRegex(ValueError, "集数与本地 STRM 文件数不一致"):
+                    telegram_bot.update_item_source(
+                        {"kind": "tv", "files": paths},
+                        {"eps": [("第1集", "https://new.example/ep1.m3u8")]},
+                    )
+
+            self.assertTrue(all("old.example" in Path(path).read_text(encoding="utf-8") for path in paths))
+
+    def test_delete_command_requires_confirmation_before_unlinking(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            movie_root = Path(temporary) / "movies"
+            movie_dir = movie_root / "Example Movie (2024)"
+            movie_dir.mkdir(parents=True)
+            strm_file = movie_dir / "Example Movie (2024).strm"
+            strm_file.write_text("https://media.example/movie.m3u8\n", encoding="utf-8")
+            original_allowed = telegram_bot.ALLOWED
+            telegram_bot.ALLOWED = {123}
+            try:
+                with patch.object(telegram_bot.seasons, "MOVIE_ROOT", str(movie_root)), patch.object(
+                    telegram_bot, "tg"
+                ) as mock_tg:
+                    telegram_bot.handle({
+                        "message": {"chat": {"id": 123}, "text": "/delete Example Movie"}
+                    })
+                    selection_markup = mock_tg.call_args.kwargs["reply_markup"]
+                    selection_callback = selection_markup["inline_keyboard"][0][0]["callback_data"]
+                    self.assertTrue(strm_file.exists())
+                    telegram_bot.handle({
+                        "callback_query": {
+                            "id": "selection",
+                            "message": {"chat": {"id": 123}},
+                            "data": selection_callback,
+                        }
+                    })
+                    confirmation_markup = mock_tg.call_args.kwargs["reply_markup"]
+                    confirmation_callback = confirmation_markup["inline_keyboard"][0][0]["callback_data"]
+                    self.assertTrue(strm_file.exists())
+                    telegram_bot.handle({
+                        "callback_query": {
+                            "id": "confirmation",
+                            "message": {"chat": {"id": 123}},
+                            "data": confirmation_callback,
+                        }
+                    })
+                    self.assertFalse(strm_file.exists())
+            finally:
+                telegram_bot.ALLOWED = original_allowed
+
+    def test_edit_options_show_measured_line_quality(self):
+        item = {
+            "kind": "movie",
+            "name": "Example Movie",
+            "full": "Example Movie",
+            "year": "2024",
+            "season": 1,
+            "files": ["C:\\media\\movies\\Example Movie.strm"],
+        }
+        result = {
+            "name": "Example Movie",
+            "full": "Example Movie",
+            "season": 1,
+            "explicit": False,
+            "year": "2024",
+            "kind": "movie",
+            "lines": [{
+                "label": "Source/1080p",
+                "eps": [("播放", "https://media.example/1080p.m3u8")],
+            }],
+        }
+        with patch.object(telegram_bot, "candidates", return_value=[result]), patch.object(
+            telegram_bot.probe,
+            "rank",
+            side_effect=lambda lines, _log: [
+                {**lines[0], "_info": "1920x1080 / 8.0Mbps"}
+            ],
+        ), patch.object(telegram_bot, "say") as mock_say:
+            telegram_bot.show_edit_sources(123, item)
+
+        markup = mock_say.call_args.args[2]
+        self.assertIn("1920x1080 / 8.0Mbps", markup[0][0]["text"])
+        self.assertTrue(markup[0][0]["callback_data"].startswith("editsrc:"))
+
+    def test_help_lists_delete_and_edit_commands(self):
+        original_allowed = telegram_bot.ALLOWED
+        telegram_bot.ALLOWED = {123}
+        try:
+            with patch.object(telegram_bot, "tg") as mock_tg:
+                telegram_bot.handle({
+                    "message": {"chat": {"id": 123}, "text": "/help"}
+                })
+        finally:
+            telegram_bot.ALLOWED = original_allowed
+
+        help_text = mock_tg.call_args.kwargs["text"]
+        self.assertIn("/delete 片名", help_text)
+        self.assertIn("/edit 片名", help_text)
+        self.assertIn("分辨率", help_text)
+
+    def test_season_migration_previews_before_confirmation_and_applies_on_click(self):
+        preview = subprocess.CompletedProcess(
+            ["migrate_seasons.py"], 0,
+            "[预览]: Example S02 (2集) -> Example/Season 02\n共 1 个季目录待迁移(加 --apply 执行)\n",
+            "",
+        )
+        applied = subprocess.CompletedProcess(
+            ["migrate_seasons.py", "--apply"], 0,
+            "移动: Example S02 (2集) -> Example/Season 02\n共 1 个季目录已迁移\n",
+            "",
+        )
+        original_allowed = telegram_bot.ALLOWED
+        telegram_bot.ALLOWED = {123}
+        try:
+            with patch.object(telegram_bot.subprocess, "run", side_effect=[preview, applied]) as mock_run, patch.object(
+                telegram_bot, "tg"
+            ) as mock_tg, patch.object(telegram_bot, "refresh_jellyfin") as mock_refresh:
+                telegram_bot.handle({
+                    "message": {"chat": {"id": 123}, "text": "/migrate"}
+                })
+
+                self.assertEqual(mock_run.call_count, 1)
+                self.assertEqual(mock_run.call_args.args[0][-1], "/opt/m3u/migrate_seasons.py")
+                markup = mock_tg.call_args.kwargs["reply_markup"]
+                callback_data = markup["inline_keyboard"][0][0]["callback_data"]
+                self.assertTrue(callback_data.startswith("migrateapply:"))
+
+                telegram_bot.handle({
+                    "callback_query": {
+                        "id": "migration",
+                        "message": {"chat": {"id": 123}},
+                        "data": callback_data,
+                    }
+                })
+
+                self.assertEqual(mock_run.call_count, 2)
+                self.assertEqual(mock_run.call_args.args[0][-1], "--apply")
+                mock_refresh.assert_called_once()
+        finally:
+            telegram_bot.ALLOWED = original_allowed
+
+    def test_season_migration_does_not_offer_confirmation_when_nothing_is_pending(self):
+        result = subprocess.CompletedProcess(
+            ["migrate_seasons.py"], 0,
+            "共 0 个季目录待迁移(加 --apply 执行)\n",
+            "",
+        )
+        with patch.object(telegram_bot.subprocess, "run", return_value=result), patch.object(
+            telegram_bot, "say"
+        ) as mock_say:
+            telegram_bot.run_season_migration(123)
+
+        self.assertEqual(mock_say.call_count, 1)
+        self.assertEqual(len(mock_say.call_args.args), 2)
+        self.assertIn("共 0 个季目录待迁移", mock_say.call_args.args[1])
 
 
 if __name__ == "__main__":

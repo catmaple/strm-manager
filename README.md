@@ -287,6 +287,8 @@ docker compose exec strm-manager python /opt/m3u/crawl.py --types
 
 `crawl.py --types` 应列出已配置源的分类。没有配置 `crawl.sources` 或源接口无法访问时，先回管理网页修正配置，不要开始大批量抓取。
 
+`auto.py` 从 `list_urls` 获取待处理片名；`crawl.py` 仍使用 `crawl.sources` 获取分类和视频 metadata。两者在查找实际播放链接时，都会读取 DecoTV 中所有已启用的非成人视频源并通过 DecoTV 代理逐源聚合搜索，不再局限于网页中 `cms_apis` 当前选中的单个源。请配置有效的 DecoTV 管理员凭证；凭证缺失时播放源搜索会回退到 `cms_apis`。
+
 重点：容器内脚本仍然使用 `/media/movies` 和 `/media/tv`，但它们分别映射到宿主机的 `/media/movies` 和 `/media/shows`。因此最终生成的 STRM 永远在宿主机 `/media/movies` 和 `/media/shows`，而不是项目目录 `data/media/`；Jellyfin 媒体库仍填写容器内路径 `/media/movies` 和 `/media/tv`。
 
 ## 8. 验证 STRM 入库与播放
@@ -340,7 +342,7 @@ tail -n 100 data/manager/logs/recheck.log
 
 如需使用 Telegram 机器人，在网页配置 `telegram.token` 和非空的 `telegram.allowed_chat_ids`。机器人只响应授权的 Chat ID；更改 Token 或授权列表后，管理容器会自动重启机器人进程。
 
-### Telegram 查看统计与搜索添加影片
+### Telegram 查看统计、搜索、删除与换源
 
 1. 在 Telegram 中创建机器人并取得 Bot Token，将 Token 填入网页的 `telegram.token`。
 2. 获取自己的数字 Chat ID，在 `telegram.allowed_chat_ids` 中填写；多个 ID 用逗号分隔。保存后，确认控制台服务状态显示 Telegram 机器人正在运行。
@@ -351,14 +353,17 @@ tail -n 100 data/manager/logs/recheck.log
 | 操作 | 说明 |
 |---|---|
 | `/stats` 或 `/status` | 查看媒体库电影/剧集数量、抓取进度、线路状态、磁盘空间及 DecoTV/Jellyfin 服务状态；此命令只查询并回复，不更新每周统计快照 |
-| 直接输入并发送片名（无需 `/` 命令），例如 `示例电影` | 通过 DecoTV 代理搜索当前已配置的 CMS API，并返回可用版本按钮；点击一个版本后，机器人测速选择线路、生成 STRM 文件，并尝试通知 Jellyfin 扫描 |
+| 直接输入并发送片名（无需 `/` 命令），例如 `示例电影` | 通过 DecoTV 代理搜索所有已启用的非成人视频源，并返回可用版本按钮；点击一个版本后，机器人测速选择线路、生成 STRM 文件，并尝试通知 Jellyfin 扫描 |
 | `/add 片名` | 搜索片名；只有唯一匹配时才会直接添加，否则会显示版本供选择 |
+| `/delete 片名` | 查找本地电影/剧集 STRM，先选择目标并二次确认；只删除选中条目的 `.strm` 文件，不删除海报等其他文件 |
+| `/edit 片名` | 查找本地条目，搜索 DecoTV 全部可用来源；显示测速速度和可识别的 HLS 分辨率，选择线路后更新对应 STRM 播放地址。剧集只列出集数与本地文件数相同的线路 |
+| `/migrate` | 预览旧剧集季目录迁移；发现待迁移项后需点击确认才会执行文件移动 |
 | `/scan` | 请求 Jellyfin 扫描媒体库 |
 | `/crawl` | 手动运行一次视频源分类抓取，最多新增 30 部 |
 | `/auto` | 手动运行一次 DecoTV 榜单抓取 |
 | `/recheck` | 手动运行线路复测 |
 
-Telegram 搜索会使用 DecoTV 管理员会话读取 DecoTV 中所有已启用的非成人视频源，并逐一通过 DecoTV 代理搜索；因此搜索范围不受网页中当前选中的单个 `cms_apis` 来源限制。来源列表会在每次搜索时重新读取。`cms_apis` 仍用于 STRM Manager 的抓取配置。若未配置 DecoTV 管理员凭证，机器人会退回到 `cms_apis` 中的来源。若未配置 Jellyfin API Key，生成 STRM 后需等待 Jellyfin 定时扫描，或在 Jellyfin 中手动扫描媒体库。请只搜索和添加自己有权访问的内容。
+Telegram、`auto.py` 和 `crawl.py` 查找播放链接时，都会使用 DecoTV 管理员会话读取所有已启用的非成人视频源，并逐一通过 DecoTV 代理搜索；播放源搜索不受网页中当前选中的单个 `cms_apis` 来源限制。来源列表会在每次任务运行/搜索时读取。`crawl.sources` 仍用于抓取分类和视频 metadata；`auto.py` 的片名清单仍来自 `list_urls`。若未配置 DecoTV 管理员凭证，播放源搜索会退回 `cms_apis` 中的来源。若未配置 Jellyfin API Key，生成 STRM 后需等待 Jellyfin 定时扫描，或在 Jellyfin 中手动扫描媒体库。请只搜索和添加自己有权访问的内容。
 
 获取 Chat ID 时，可先向机器人发送一条消息，再通过 Telegram Bot API 的 `getUpdates` 响应读取 `message.chat.id`。Bot Token 是密码，不要把带 Token 的 API URL、终端输出或截图分享给他人；配置完授权 ID 后不要再公开 Token。
 

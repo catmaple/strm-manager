@@ -119,6 +119,38 @@ class ConfigWebTests(unittest.TestCase):
         self.assertRegex(body, r'<script src="[^"]*i18n\.js"></script>')
         self.assertIn("扫描DecoTV默认分类", body)
         self.assertIn("扫描视频源分类", body)
+        self.assertIn("Telegram 机器人提供的功能", body)
+        self.assertIn("<code>/delete 片名</code>", body)
+        self.assertIn("<code>/edit 片名</code>", body)
+        self.assertIn("<code>/migrate</code>", body)
+        for label in (
+            "榜单抓取每次新增上限",
+            "榜单抓取最大翻页数",
+            "每次运行最多查询数",
+            "未找到资源重试间隔（天）",
+            "线路最低余量阈值",
+            "切换线路所需提升倍数",
+            "线路复测间隔（天）",
+            "每次复测最大线路数",
+            "通过 DecoTV 代理抓取",
+            "跳过未标注年份的视频",
+            "评分来源",
+            "最低评分",
+            "只抓取最近几年作品",
+            "最低作品年份",
+            "每次抓取新增上限",
+            "每次抓取最大翻页数",
+            "每个分类新增上限",
+            "每个分类最大翻页数",
+            "补库阶段最大页数",
+            "增量更新最大页数",
+            "剧集最大集数",
+            "抓取请求间隔（秒）",
+        ):
+            self.assertIn(label, body)
+        self.assertIn('<option value="douban"', body)
+        self.assertIn('<option value="vod"', body)
+        self.assertIn('<option value="any"', body)
         self.assertNotIn("自动整理电影分类", body)
         self.assertIn("线路复测", body)
         self.assertIn("统计数量", body)

@@ -249,6 +249,8 @@ docker compose exec strm-manager python /opt/m3u/crawl.py --types
 
 `crawl.py --types` should list categories from configured sources. If `crawl.sources` is empty or a source is unreachable, fix the configuration before starting a full crawl.
 
+`auto.py` gets titles to process from `list_urls`; `crawl.py` continues to use `crawl.sources` for categories and video metadata. When resolving actual playback links, both read all enabled, non-adult DecoTV sources and search each through the DecoTV proxy, rather than being limited to the single `cms_apis` source selected in the web UI. Configure valid DecoTV administrator credentials; without them, playback searches fall back to `cms_apis`.
+
 ## Test STRM generation and playback
 
 Start with a small Dry Run:
@@ -306,7 +308,7 @@ tail -n 100 data/manager/logs/recheck.log
 
 To use the Telegram bot, configure `telegram.token` and at least one authorized ID in `telegram.allowed_chat_ids`. Enter multiple chat IDs as comma-separated numbers in the form. The bot only responds to authorized IDs and restarts automatically when its token or allowed-ID list changes.
 
-### Telegram statistics and title search
+### Telegram statistics, search, deletion, and source switching
 
 1. Create a Telegram bot and copy its Bot Token into `telegram.token` in the web console.
 2. Find your numeric Telegram Chat ID and enter it in `telegram.allowed_chat_ids`. Separate multiple IDs with commas. After saving, confirm the console reports that the Telegram bot is running.
@@ -315,14 +317,17 @@ To use the Telegram bot, configure `telegram.token` and at least one authorized 
 | Command or action | What it does |
 |---|---|
 | `/stats` or `/status` | Replies with movie/TV counts, crawl progress, source health, disk space, and DecoTV/Jellyfin status. It only reports the current state; it does not update the weekly statistics snapshot. |
-| Type and send a title directly (no `/` command needed), for example `Example Movie` | Searches the configured CMS APIs through the DecoTV proxy and returns buttons for available matches. Selecting one tests the routes, chooses a source, creates STRM files, and asks Jellyfin to scan the library. |
+| Type and send a title directly (no `/` command needed), for example `Example Movie` | Searches all enabled, non-adult DecoTV sources through the proxy and returns buttons for available matches. Selecting one tests the routes, chooses a source, creates STRM files, and asks Jellyfin to scan the library. |
 | `/add TITLE` | Searches for a title and adds it directly only when there is a unique match; otherwise, it presents choices. |
+| `/delete TITLE` | Finds local movie/TV STRMs, asks you to select a target and confirm; it only removes that item's `.strm` files, not posters or other files. |
+| `/edit TITLE` | Finds a local item and searches all available DecoTV sources; lists measured speed and detectable HLS resolution. Selecting a source updates the matching STRM URLs. TV options are limited to sources with the same episode count as the local files. |
+| `/migrate` | Previews migration of legacy TV season folders; click the confirmation button to move files when migration candidates are found. |
 | `/scan` | Requests a Jellyfin library scan. |
 | `/crawl` | Runs one source-category crawl, capped at 30 new items. |
 | `/auto` | Runs one DecoTV chart/list crawl. |
 | `/recheck` | Runs a source recheck. |
 
-Telegram search uses an authenticated DecoTV administrator session to read all enabled, non-adult DecoTV sources, then searches each source through the DecoTV proxy. Its search scope is therefore not limited to the single `cms_apis` source currently selected in the web UI. The bot refreshes the source list for each search. `cms_apis` remains the source configuration for STRM Manager crawling. If DecoTV administrator credentials are not configured, the bot falls back to sources in `cms_apis`. If no Jellyfin API key is configured, wait for Jellyfin's scheduled scan or trigger a library scan manually. Only search for and add content you are authorized to access.
+Telegram, `auto.py`, and `crawl.py` use an authenticated DecoTV administrator session to read all enabled, non-adult DecoTV sources and search each source through the DecoTV proxy when resolving playback links. Playback search is not limited to the single `cms_apis` source selected in the web UI. The source list is refreshed for each search/task run. `crawl.sources` continues to supply categories and video metadata; `auto.py` still gets its title list from `list_urls`. Without DecoTV administrator credentials, playback searches fall back to `cms_apis`. If no Jellyfin API key is configured, wait for Jellyfin's scheduled scan or trigger a library scan manually. Only search for and add content you are authorized to access.
 
 To obtain your Chat ID, send a message to the bot and read `message.chat.id` from the Telegram Bot API `getUpdates` response. Treat the Bot Token like a password. Never share API URLs containing the token, terminal output, or screenshots that expose it.
 

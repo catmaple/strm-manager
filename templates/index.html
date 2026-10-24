@@ -118,35 +118,35 @@
         <h3>抓取与复测参数</h3>
         <div class="form-grid">
           <div class="field">
-            <label for="max_new_per_run">max_new_per_run</label>
+            <label for="max_new_per_run">榜单抓取每次新增上限</label>
             <input id="max_new_per_run" name="max_new_per_run" type="number" value="{{ config.get('max_new_per_run', '') }}">
           </div>
           <div class="field">
-            <label for="max_pages">max_pages</label>
+            <label for="max_pages">榜单抓取最大翻页数</label>
             <input id="max_pages" name="max_pages" type="number" value="{{ config.get('max_pages', '') }}">
           </div>
           <div class="field">
-            <label for="max_lookups_per_run">max_lookups_per_run</label>
+            <label for="max_lookups_per_run">每次运行最多查询数</label>
             <input id="max_lookups_per_run" name="max_lookups_per_run" type="number" value="{{ config.get('max_lookups_per_run', '') }}">
           </div>
           <div class="field">
-            <label for="retry_miss_days">retry_miss_days</label>
+            <label for="retry_miss_days">未找到资源重试间隔（天）</label>
             <input id="retry_miss_days" name="retry_miss_days" type="number" value="{{ config.get('retry_miss_days', '') }}">
           </div>
           <div class="field">
-            <label for="recheck_min_headroom">recheck.min_headroom</label>
+            <label for="recheck_min_headroom">线路最低余量阈值</label>
             <input id="recheck_min_headroom" name="recheck_min_headroom" type="number" step="0.1" value="{{ config.get('recheck', {}).get('min_headroom', '') }}">
           </div>
           <div class="field">
-            <label for="recheck_switch_gain">recheck.switch_gain</label>
+            <label for="recheck_switch_gain">切换线路所需提升倍数</label>
             <input id="recheck_switch_gain" name="recheck_switch_gain" type="number" step="0.1" value="{{ config.get('recheck', {}).get('switch_gain', '') }}">
           </div>
           <div class="field">
-            <label for="recheck_interval_days">recheck.interval_days</label>
+            <label for="recheck_interval_days">线路复测间隔（天）</label>
             <input id="recheck_interval_days" name="recheck_interval_days" type="number" value="{{ config.get('recheck', {}).get('interval_days', '') }}">
           </div>
           <div class="field">
-            <label for="recheck_max_per_run">recheck.max_per_run</label>
+            <label for="recheck_max_per_run">每次复测最大线路数</label>
             <input id="recheck_max_per_run" name="recheck_max_per_run" type="number" value="{{ config.get('recheck', {}).get('max_per_run', '') }}">
           </div>
         </div>
@@ -221,6 +221,18 @@
         </div>
 
         <h3>Telegram</h3>
+        <div class="field field-wide muted" aria-label="Telegram 功能说明">
+          <strong>Telegram 机器人提供的功能：</strong>
+          <ul>
+            <li>搜索 DecoTV 全部已启用视频源，并选择版本添加到 Jellyfin</li>
+            <li><code>/add 片名</code>：同名唯一时直接添加，否则选择版本</li>
+            <li><code>/delete 片名</code>：选择本地电影或剧集 STRM，并二次确认删除</li>
+            <li><code>/edit 片名</code>：测速并显示可用线路的速度/分辨率，点击切换播放源</li>
+            <li><code>/migrate</code>：预览旧剧集季目录迁移，确认后执行文件移动</li>
+            <li><code>/crawl</code>、<code>/auto</code>：运行分类抓取或榜单抓取</li>
+            <li><code>/recheck</code>、<code>/stats</code>、<code>/scan</code>：复测线路、查看状态或通知 Jellyfin 扫描</li>
+          </ul>
+        </div>
         <div class="form-grid">
           <div class="field">
             <label for="telegram_token">telegram.token</label>
@@ -237,29 +249,34 @@
           <div class="field checkbox-row">
             <label for="crawl_via_decotv">
               <input id="crawl_via_decotv" name="crawl_via_decotv" type="checkbox" {% if config.get('crawl', {}).get('via_decotv') %}checked{% endif %}>
-              crawl.via_decotv
+              通过 DecoTV 代理抓取（crawl.via_decotv）
             </label>
           </div>
           <div class="field checkbox-row">
             <label for="crawl_skip_unknown_year">
               <input id="crawl_skip_unknown_year" name="crawl_skip_unknown_year" type="checkbox" {% if config.get('crawl', {}).get('skip_unknown_year') %}checked{% endif %}>
-              crawl.skip_unknown_year
+              跳过未标注年份的视频（crawl.skip_unknown_year）
             </label>
           </div>
           <div class="field">
-            <label for="crawl_score_field">crawl.score_field</label>
-            <input id="crawl_score_field" name="crawl_score_field" type="text" value="{{ config.get('crawl', {}).get('score_field', 'douban') }}">
+            <label for="crawl_score_field">评分来源</label>
+            <select id="crawl_score_field" name="crawl_score_field">
+              {% set score_field = config.get('crawl', {}).get('score_field', 'douban') %}
+              <option value="douban" {% if score_field == 'douban' %}selected{% endif %}>豆瓣评分</option>
+              <option value="vod" {% if score_field == 'vod' %}selected{% endif %}>视频源评分</option>
+              <option value="any" {% if score_field == 'any' %}selected{% endif %}>优先豆瓣，无豆瓣分时使用视频源评分</option>
+            </select>
           </div>
           <div class="field">
-            <label for="crawl_min_score">crawl.min_score</label>
+            <label for="crawl_min_score">最低评分</label>
             <input id="crawl_min_score" name="crawl_min_score" type="number" value="{{ config.get('crawl', {}).get('min_score', '') }}">
           </div>
           <div class="field">
-            <label for="crawl_max_age_years">crawl.max_age_years</label>
+            <label for="crawl_max_age_years">只抓取最近几年作品</label>
             <input id="crawl_max_age_years" name="crawl_max_age_years" type="number" value="{{ config.get('crawl', {}).get('max_age_years', '') }}">
           </div>
           <div class="field">
-            <label for="crawl_min_year">crawl.min_year</label>
+            <label for="crawl_min_year">最低作品年份</label>
             <input id="crawl_min_year" name="crawl_min_year" type="number" value="{{ config.get('crawl', {}).get('min_year', '') }}">
           </div>
           <input id="crawl_sources" name="crawl_sources" type="hidden" value="{{ (config.get('crawl', {}).get('sources') or []) | tojson | forceescape }}">
@@ -275,35 +292,35 @@
             </div>
           </div>
           <div class="field">
-            <label for="crawl_max_new_per_run">crawl.max_new_per_run</label>
+            <label for="crawl_max_new_per_run">每次抓取新增上限</label>
             <input id="crawl_max_new_per_run" name="crawl_max_new_per_run" type="number" value="{{ config.get('crawl', {}).get('max_new_per_run', '') }}">
           </div>
           <div class="field">
-            <label for="crawl_max_pages_per_run">crawl.max_pages_per_run</label>
+            <label for="crawl_max_pages_per_run">每次抓取最大翻页数</label>
             <input id="crawl_max_pages_per_run" name="crawl_max_pages_per_run" type="number" value="{{ config.get('crawl', {}).get('max_pages_per_run', '') }}">
           </div>
           <div class="field">
-            <label for="crawl_per_type_new">crawl.per_type_new</label>
+            <label for="crawl_per_type_new">每个分类新增上限</label>
             <input id="crawl_per_type_new" name="crawl_per_type_new" type="number" value="{{ config.get('crawl', {}).get('per_type_new', '') }}">
           </div>
           <div class="field">
-            <label for="crawl_per_type_pages">crawl.per_type_pages</label>
+            <label for="crawl_per_type_pages">每个分类最大翻页数</label>
             <input id="crawl_per_type_pages" name="crawl_per_type_pages" type="number" value="{{ config.get('crawl', {}).get('per_type_pages', '') }}">
           </div>
           <div class="field">
-            <label for="crawl_backfill_max_pages">crawl.backfill_max_pages</label>
+            <label for="crawl_backfill_max_pages">补库阶段最大页数（0 表示不限制）</label>
             <input id="crawl_backfill_max_pages" name="crawl_backfill_max_pages" type="number" value="{{ config.get('crawl', {}).get('backfill_max_pages', '') }}">
           </div>
           <div class="field">
-            <label for="crawl_update_pages">crawl.update_pages</label>
+            <label for="crawl_update_pages">增量更新最大页数</label>
             <input id="crawl_update_pages" name="crawl_update_pages" type="number" value="{{ config.get('crawl', {}).get('update_pages', '') }}">
           </div>
           <div class="field">
-            <label for="crawl_max_eps">crawl.max_eps</label>
+            <label for="crawl_max_eps">剧集最大集数（0 表示不限制）</label>
             <input id="crawl_max_eps" name="crawl_max_eps" type="number" value="{{ config.get('crawl', {}).get('max_eps', '') }}">
           </div>
           <div class="field">
-            <label for="crawl_delay">crawl.delay</label>
+            <label for="crawl_delay">抓取请求间隔（秒）</label>
             <input id="crawl_delay" name="crawl_delay" type="number" step="0.1" value="{{ config.get('crawl', {}).get('delay', '') }}">
           </div>
         </div>
