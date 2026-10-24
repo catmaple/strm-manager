@@ -81,7 +81,10 @@ def infer_item_kind(configured_kind, title, item):
     if explicit or season > 1:
         return "tv"
     category = str(item.get("type_name") or "").lower()
-    tv_tokens = ("电视剧", "连续剧", "剧集", "番剧", "动漫", "综艺", "纪录片", "series", "anime")
+    tv_tokens = (
+        "电视剧", "连续剧", "剧集", "短剧", "网剧", "番剧", "动漫", "综艺",
+        "纪录片", "series", "anime",
+    )
     movie_tokens = (
         "电影", "影片", "动作片", "喜剧片", "爱情片", "科幻片", "恐怖片",
         "战争片", "犯罪片", "剧情片", "悬疑片", "movie", "film",
@@ -90,6 +93,20 @@ def infer_item_kind(configured_kind, title, item):
         return "tv"
     if any(token in category for token in movie_tokens):
         return "movie"
+    for key in ("vod_total", "vod_serial"):
+        try:
+            if int(item.get(key) or 0) > 1:
+                return "tv"
+        except (TypeError, ValueError):
+            continue
+    remarks = str(item.get("vod_remarks") or "").lower()
+    if re.search(r"(?:更新至|全|共)\s*\d+\s*集|第\s*\d+\s*集", remarks):
+        return "tv"
+    play_groups = str(item.get("vod_play_url") or "").split("$$$")
+    for group in play_groups:
+        episodes = [entry for entry in group.split("#") if "$" in entry]
+        if len(episodes) > 1:
+            return "tv"
     return configured_kind
 
 

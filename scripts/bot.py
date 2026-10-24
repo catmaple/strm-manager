@@ -81,6 +81,20 @@ def http_json(url, cookie=""):
         return json.load(r)
 
 
+def parse_search_title(raw):
+    base, season, explicit = seasons.parse_title(raw)
+    episode_match = re.search(
+        r"(?:第\s*([0-9]{1,4}|[一二三四五六七八九十两]{1,3})\s*[集话話期]"
+        r"|(?:EP|E)\s*0*([0-9]{1,4}))\s*$",
+        base,
+        re.IGNORECASE,
+    )
+    if not episode_match:
+        return base, season, explicit, False
+    base = re.sub(r"[\s:：\-—–·、,，]+$", "", base[:episode_match.start()]).strip()
+    return base, season, explicit, True
+
+
 def candidates(title):
     tbase, tseason, _ = seasons.parse_title(title)
     out = {}
@@ -102,13 +116,14 @@ def candidates(title):
             tags = raw + (v.get("type_name") or "") + (v.get("vod_remarks") or "")
             if any(k in tags for k in SKIP_WORDS):
                 continue
-            base, sn, explicit = seasons.parse_title(raw)
+            base, sn, explicit, episode_marked = parse_search_title(raw)
             if not base:
                 continue
             vy = (v.get("vod_year") or "").strip()
             vy = vy if vy.isdigit() else ""
             groups = v.get("vod_play_url", "").split("$$$")
             froms = v.get("vod_play_from", "").split("$$$")
+            record_lines = []
             for i, g in enumerate(groups):
                 if ".m3u8" not in g:
                     continue
@@ -116,16 +131,48 @@ def candidates(title):
                 eps = [(n, u.strip()) for n, u in eps if ".m3u8" in u]
                 if not eps:
                     continue
-                c = out.setdefault((base, sn, vy), {
-                    "name": base, "full": seasons.clean(raw), "season": sn,
-                    "explicit": explicit, "year": vy,
-                    "kind": seasons.infer_item_kind("movie", raw, v),
-                    "lang": v.get("vod_lang") or "", "lines": []})
                 ln = froms[i] if i < len(froms) else f"线路{i}"
-                c["lines"].append({"label": f"{host}/{ln}", "eps": eps})
+                record_lines.append((ln, eps))
+            if not record_lines:
+                continue
+            kind = seasons.infer_item_kind("movie", raw, v)
+            c = out.setdefault((base, sn, vy), {
+                "name": base, "full": seasons.clean(raw), "season": sn,
+                "explicit": explicit, "year": vy,
+                "kind": kind,
+                "lang": v.get("vod_lang") or "", "lines": [],
+                "record_count": 0, "episode_marked": False})
+            c["record_count"] += 1
+            c["episode_marked"] = c["episode_marked"] or episode_marked
+            if kind == "tv" or episode_marked:
+                c["kind"] = "tv"
+            for ln, eps in record_lines:
+                line_label = f"{host}/{ln}"
+                line = next(
+                    (entry for entry in c["lines"] if entry["label"] == line_label),
+                    None,
+                )
+                if line is None:
+                    line = {"label": line_label, "eps": []}
+                    c["lines"].append(line)
+                existing_urls = {url for _name, url in line["eps"]}
+                line["eps"].extend(
+                    (name, url) for name, url in eps if url not in existing_urls
+                )
     res = list(out.values())
+    season_groups = {}
+    for c in res:
+        season_groups.setdefault((c["name"], c["year"]), set()).add(c["season"])
+    for c in res:
+        if (
+            (c["episode_marked"] and c["record_count"] > 1)
+            or len(season_groups[(c["name"], c["year"])]) > 1
+        ):
+            c["kind"] = "tv"
     for c in res:
         c["eps"] = max(c["lines"], key=lambda l: len(l["eps"]))["eps"]  # 仅用于显示
+        c.pop("record_count", None)
+        c.pop("episode_marked", None)
     res.sort(key=lambda c: not (c["name"] == tbase and c["season"] == tseason))
     return res[:8]
 

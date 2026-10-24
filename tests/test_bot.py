@@ -50,6 +50,112 @@ class TelegramSearchTests(unittest.TestCase):
         self.assertEqual(target_query["ac"], ["detail"])
         self.assertEqual(target_query["wd"], ["Example Movie"])
 
+    @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
+    @patch.object(telegram_bot, "http_json")
+    def test_search_recognizes_unknown_category_with_multiple_episodes(
+        self, mock_http_json, _cookie
+    ):
+        mock_http_json.return_value = {
+            "list": [{
+                "vod_name": "Example Series",
+                "vod_year": "2024",
+                "type_name": "国产",
+                "vod_play_url": (
+                    "第1集$https://media.example/ep1.m3u8#"
+                    "第2集$https://media.example/ep2.m3u8"
+                ),
+                "vod_play_from": "线路一",
+            }],
+        }
+
+        results = telegram_bot.candidates("Example Series")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["kind"], "tv")
+        self.assertEqual(len(results[0]["eps"]), 2)
+        self.assertIn("2集", telegram_bot.label(results[0]))
+
+    def test_single_episode_short_drama_is_recognized_as_tv(self):
+        kind = telegram_bot.seasons.infer_item_kind(
+            "movie",
+            "Example Short Drama",
+            {
+                "type_name": "短剧",
+                "vod_remarks": "更新至12集",
+                "vod_play_url": "第1集$https://media.example/ep1.m3u8",
+            },
+        )
+
+        self.assertEqual(kind, "tv")
+
+    @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
+    @patch.object(telegram_bot, "http_json")
+    def test_same_series_with_separate_episode_records_is_merged(
+        self, mock_http_json, _cookie
+    ):
+        mock_http_json.return_value = {
+            "list": [
+                {
+                    "vod_name": "Example Series 第1集",
+                    "vod_year": "2024",
+                    "type_name": "国产",
+                    "vod_play_url": "第1集$https://media.example/ep1.m3u8",
+                    "vod_play_from": "线路一",
+                },
+                {
+                    "vod_name": "Example Series 第2集",
+                    "vod_year": "2024",
+                    "type_name": "国产",
+                    "vod_play_url": "第2集$https://media.example/ep2.m3u8",
+                    "vod_play_from": "线路一",
+                },
+            ],
+        }
+
+        results = telegram_bot.candidates("Example Series")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["name"], "Example Series")
+        self.assertEqual(results[0]["kind"], "tv")
+        self.assertEqual(
+            results[0]["eps"],
+            [
+                ("第1集", "https://media.example/ep1.m3u8"),
+                ("第2集", "https://media.example/ep2.m3u8"),
+            ],
+        )
+        self.assertIn("2集", telegram_bot.label(results[0]))
+
+    @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
+    @patch.object(telegram_bot, "http_json")
+    def test_same_series_with_multiple_seasons_is_marked_as_tv(
+        self, mock_http_json, _cookie
+    ):
+        mock_http_json.return_value = {
+            "list": [
+                {
+                    "vod_name": "Example Series 第1季",
+                    "vod_year": "2023",
+                    "type_name": "国产",
+                    "vod_play_url": "第1集$https://media.example/s1e1.m3u8",
+                    "vod_play_from": "线路一",
+                },
+                {
+                    "vod_name": "Example Series 第2季",
+                    "vod_year": "2024",
+                    "type_name": "国产",
+                    "vod_play_url": "第1集$https://media.example/s2e1.m3u8",
+                    "vod_play_from": "线路一",
+                },
+            ],
+        }
+
+        results = telegram_bot.candidates("Example Series")
+
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result["kind"] == "tv" for result in results))
+        self.assertEqual({result["season"] for result in results}, {1, 2})
+
     @patch.object(telegram_bot.urllib.request, "urlopen")
     def test_decotv_cookie_login_uses_admin_credentials(self, mock_urlopen):
         class FakeHeaders:
