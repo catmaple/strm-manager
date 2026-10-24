@@ -453,16 +453,19 @@ class TelegramSearchTests(unittest.TestCase):
         self.assertEqual(tv_matches[0]["season"], 2)
         self.assertEqual(len(tv_matches[0]["files"]), 1)
 
-    def test_delete_item_only_removes_strm_files_and_keeps_library_root(self):
+    def test_delete_item_removes_movie_folder_with_posters_and_keeps_library_root(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             movie_root = root / "movies"
             movie_dir = movie_root / "Example Movie (2024)"
+            other_dir = movie_root / "Other Movie (2023)"
             movie_dir.mkdir(parents=True)
+            other_dir.mkdir()
             strm_file = movie_dir / "Example Movie (2024).strm"
             strm_file.write_text("https://media.example/movie.m3u8\n", encoding="utf-8")
             other_file = movie_dir / "poster.jpg"
             other_file.write_bytes(b"poster")
+            (movie_dir / "movie.nfo").write_text("nfo", encoding="utf-8")
             item = {
                 "kind": "movie",
                 "path": str(movie_dir),
@@ -473,10 +476,40 @@ class TelegramSearchTests(unittest.TestCase):
                 deleted = telegram_bot.delete_item(item)
 
             self.assertEqual(deleted, 1)
-            self.assertFalse(strm_file.exists())
-            self.assertTrue(other_file.exists())
+            self.assertFalse(movie_dir.exists())
+            self.assertTrue(other_dir.exists())
             self.assertTrue(movie_root.exists())
-            self.assertTrue(movie_dir.exists())
+
+    def test_delete_tv_season_keeps_series_metadata_until_last_season(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tv_root = Path(temporary) / "tv"
+            series = tv_root / "Example Series (2024)"
+            seasons_dirs = {}
+            for number in (1, 2):
+                season = series / f"Season {number:02d}"
+                season.mkdir(parents=True)
+                strm = season / f"Example Series S{number:02d}E01.strm"
+                strm.write_text("https://x/1.m3u8\n", encoding="utf-8")
+                (season / "poster.jpg").write_bytes(b"p")
+                seasons_dirs[number] = (season, strm)
+            (series / "poster.jpg").write_bytes(b"p")
+            (series / "season01-poster.jpg").write_bytes(b"p")
+            (series / "season02-poster.jpg").write_bytes(b"p")
+
+            def item(number):
+                season, strm = seasons_dirs[number]
+                return {"kind": "tv", "season": number, "path": str(season), "files": [str(strm)]}
+
+            with patch.object(telegram_bot.seasons, "TV_ROOT", str(tv_root)):
+                telegram_bot.delete_item(item(1))
+                self.assertFalse(seasons_dirs[1][0].exists())
+                self.assertTrue(seasons_dirs[2][0].exists())
+                self.assertTrue((series / "poster.jpg").exists())
+                self.assertFalse((series / "season01-poster.jpg").exists())
+                self.assertTrue((series / "season02-poster.jpg").exists())
+                telegram_bot.delete_item(item(2))
+                self.assertFalse(series.exists())
+                self.assertTrue(tv_root.exists())
 
     def test_update_item_source_replaces_each_strm_url(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -520,7 +553,7 @@ class TelegramSearchTests(unittest.TestCase):
                 paths.append(str(path))
 
             with patch.object(telegram_bot.seasons, "TV_ROOT", str(tv_root)):
-                with self.assertRaisesRegex(ValueError, "集数与本地 STRM 文件数不一致"):
+                with self.assertRaisesRegex(ValueError, "集数少于本地 STRM 文件数"):
                     telegram_bot.update_item_source(
                         {"kind": "tv", "files": paths},
                         {"eps": [("第1集", "https://new.example/ep1.m3u8")]},

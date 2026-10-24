@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os, re, sys, json, time, subprocess, urllib.request, urllib.parse, urllib.error
 import secrets
+import shutil
 import tempfile
 sys.path.insert(0, "/opt/m3u")
 import probe
@@ -446,7 +447,7 @@ def confirm_delete(chat, item):
     pending_actions[chat] = {"action": "delete", "item": item, "token": token}
     say(
         chat,
-        f"确认删除 {item_label(item)}？将删除该条目的 {len(item['files'])} 个 STRM 文件，不会删除媒体目录中的其他文件。",
+        f"确认删除 {item_label(item)}？将删除该条目的 {len(item['files'])} 个 STRM 文件，以及所在目录中的海报、NFO 等全部文件，此操作不可恢复。",
         [[
             {"text": "确认删除", "callback_data": f"delconfirm:{token}"},
             {"text": "取消", "callback_data": f"cancel:{token}"},
@@ -463,21 +464,40 @@ def _inside_root(path, root):
         return False
 
 
+def _remove_tree(directory, root):
+    real_dir = os.path.realpath(directory)
+    real_root = os.path.realpath(root)
+    if real_dir == real_root or not _inside_root(directory, root):
+        raise ValueError("拒绝删除媒体库目录以外的内容")
+    if os.path.isdir(directory):
+        shutil.rmtree(directory)
+
+
 def delete_item(item):
     root = seasons.MOVIE_ROOT if item["kind"] == "movie" else seasons.TV_ROOT
-    deleted = 0
     for path in item["files"]:
         if not _inside_root(path, root) or not path.lower().endswith(".strm"):
             raise ValueError("拒绝删除媒体库目录以外的文件")
-        if os.path.isfile(path):
-            os.remove(path)
-            deleted += 1
-    for directory in (item["path"], os.path.dirname(item["path"])):
-        if os.path.realpath(directory) != os.path.realpath(root) and _inside_root(directory, root):
-            try:
-                os.rmdir(directory)
-            except OSError:
-                pass
+    deleted = sum(1 for path in item["files"] if os.path.isfile(path))
+
+    # 电影目录和剧集的季目录只属于该条目，连同海报、NFO 等一并删除
+    _remove_tree(item["path"], root)
+    if item["kind"] == "tv":
+        series_dir = os.path.dirname(item["path"])
+        remaining = [
+            name for name in os.listdir(series_dir)
+            if re.fullmatch(r"Season\s+\d{1,2}", name, re.I)
+            and os.path.isdir(os.path.join(series_dir, name))
+        ] if os.path.isdir(series_dir) else []
+        if os.path.isdir(series_dir):
+            if remaining:
+                season_prefix = f"season{int(item['season']):02d}-"
+                for name in os.listdir(series_dir):
+                    path = os.path.join(series_dir, name)
+                    if name.lower().startswith(season_prefix) and os.path.isfile(path):
+                        os.remove(path)
+            else:
+                _remove_tree(series_dir, root)
     return deleted
 
 
@@ -491,6 +511,7 @@ def show_edit_sources(chat, item):
         say(chat, str(error))
         return
     line_choices = []
+    skipped_incomplete = 0
     for result in results:
         if result["name"].casefold() != item["name"].casefold():
             continue
@@ -505,7 +526,8 @@ def show_edit_sources(chat, item):
         for line in result["lines"]:
             episode_urls = line["eps"]
             if item["kind"] == "tv":
-                if len(episode_urls) != len(item["files"]):
+                if len(episode_urls) < len(item["files"]):
+                    skipped_incomplete += 1
                     continue
                 choice_eps = episode_urls[:1]
             else:
@@ -550,6 +572,8 @@ def show_edit_sources(chat, item):
         for index, line in enumerate(ranked[:20])
     ]
     say(chat, f"请选择要用于 {item_label(item)} 的播放线路：", buttons)
+    if skipped_incomplete:
+        say(chat, f"另有 {skipped_incomplete} 条线路集数少于本地 {len(item['files'])} 集，已隐藏以免覆盖不完整。")
 
 
 def update_item_source(item, line):
@@ -560,8 +584,8 @@ def update_item_source(item, line):
             raise ValueError("所选线路没有可写入的播放地址")
         updates = [(item["files"][0], urls[0])]
     else:
-        if len(urls) != len(item["files"]):
-            raise ValueError("所选线路集数与本地 STRM 文件数不一致，已取消更新")
+        if len(urls) < len(item["files"]):
+            raise ValueError("所选线路集数少于本地 STRM 文件数，已取消更新")
         updates = list(zip(item["files"], urls))
 
     staged = []
@@ -827,10 +851,11 @@ def handle(u):
             except (KeyError, OSError, ValueError) as error:
                 say(chat, f"换源失败：{error}")
             else:
+                first_url = (line.get("series_eps") or line["eps"])[0][1]
                 say(
                     chat,
                     f"已更新 {count} 个 STRM 文件。\n线路：{line.get('label')}\n"
-                    f"测速：{line.get('_info', '未知')}",
+                    f"测速：{line.get('_info', '未知')}\n首集地址：{first_url}",
                 )
                 refresh_jellyfin()
             pending_actions.pop(chat, None)
