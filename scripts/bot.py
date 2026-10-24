@@ -3,6 +3,7 @@ import os, re, sys, json, time, subprocess, urllib.request, urllib.parse, urllib
 import secrets
 import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, "/opt/m3u")
 import probe
 import seasons
@@ -340,16 +341,47 @@ def label(c):
     return f"{nm}{year} · {kind}{lang}"
 
 
+def _short_probe_info(info):
+    # "1920x1080 / 12.5Mbps/需2.1, 首包0.31s" -> "1920x1080 · 首包0.31s"
+    info = str(info or "")
+    first_byte = re.search(r"首包\s*[\d.]+s", info)
+    resolution = info.split(" / ", 1)[0] if " / " in info else ""
+    if resolution and "Mbps" in resolution:
+        resolution = ""
+    parts = [part for part in (resolution, first_byte.group(0) if first_byte else "") if part]
+    return " · ".join(parts) if parts else "测速失败"
+
+
+def annotate_search_results(cands):
+    def probe_candidate(candidate):
+        lines = candidate.get("lines") or []
+        if not lines:
+            return "测速失败"
+        try:
+            ranked = probe.rank([dict(lines[0])], log)
+        except Exception as error:
+            log("搜索结果测速异常:", type(error).__name__)
+            return "测速失败"
+        return _short_probe_info(ranked[0].get("_info")) if ranked else "测速失败"
+
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(cands)))) as pool:
+        infos = list(pool.map(probe_candidate, cands))
+    for candidate, info in zip(cands, infos):
+        candidate["_probe"] = info
+
+
 def search_result_button_label(candidate):
     title = label(candidate)
     lines = candidate.get("lines") or []
     source = str(lines[0].get("label") or "") if lines else ""
+    prefix = f"{candidate['_probe']} · " if candidate.get("_probe") else ""
+    budget = 60 - len(prefix)
     if not source:
-        return title[:60]
-    title_limit = max(12, 60 - len(source) - 3)
+        return (prefix + title)[:60]
+    title_limit = max(8, budget - len(source) - 3)
     if len(title) > title_limit:
         title = title[:title_limit - 1] + "…"
-    return f"{title} · {source}"[:60]
+    return f"{prefix}{title} · {source}"[:60]
 
 
 def find_library_items(title):
@@ -764,6 +796,8 @@ def search_and_reply(chat, title, direct=False):
         show_add_sources(chat, exact[0])
         return
     cache[chat] = cands
+    say(chat, "正在测速各搜索结果，请稍候……")
+    annotate_search_results(cands)
     buttons = [[{"text": search_result_button_label(c), "callback_data": f"add:{i}"}]
                for i, c in enumerate(cands)]
     say(chat, "请选择要加入的版本:", buttons)

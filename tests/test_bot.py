@@ -766,12 +766,19 @@ class TelegramSearchTests(unittest.TestCase):
 
         with patch.object(telegram_bot, "candidates", return_value=candidates), patch.object(
             telegram_bot, "say"
-        ) as mock_say:
+        ) as mock_say, patch.object(
+            telegram_bot.probe,
+            "rank",
+            side_effect=lambda lines, _log: [
+                {**lines[0], "_info": "1920x1080 / 9.0Mbps/需2.0, 首包0.30s"}
+            ],
+        ):
             telegram_bot.search_and_reply(123, "Example Movie")
 
         buttons = mock_say.call_args.args[2]
         self.assertIn("Source One", buttons[0][0]["text"])
         self.assertIn("Source Two", buttons[1][0]["text"])
+        self.assertIn("1920x1080 · 首包0.30s", buttons[0][0]["text"])
         self.assertNotEqual(buttons[0][0]["text"], buttons[1][0]["text"])
 
     def test_edit_series_probes_first_episode_and_retains_full_source(self):
