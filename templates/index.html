@@ -84,6 +84,10 @@
               <option value="">正在从 DecoTV 同步视频源…</option>
             </select>
             <input id="cms_apis" name="cms_apis" type="hidden" value="{{ (config.get('cms_apis') or []) | tojson | forceescape }}">
+            <div id="sourceDebug" class="debug-panel" hidden>
+              <strong>调试请求信息</strong>
+              <pre id="sourceDebugContent"></pre>
+            </div>
             <div id="cmsPreview" class="preview-box" aria-live="polite">等待生成预览…</div>
           </div>
         </div>
@@ -343,6 +347,8 @@
       const sourcesField = document.getElementById("crawl_sources");
       const sourceStatus = document.getElementById("decotvSourceStatus");
       const sourceWarning = document.getElementById("sourceConfigWarning");
+      const sourceDebug = document.getElementById("sourceDebug");
+      const sourceDebugContent = document.getElementById("sourceDebugContent");
       const saveButton = document.getElementById("saveConfigButton");
       const formatBtn = document.getElementById("format-json");
       const csrfToken = "{{ csrf_token() }}";
@@ -454,9 +460,14 @@
           });
       }
 
-      function showSourceLoadFailure(message) {
+      function showSourceLoadFailure(message, extraInfo) {
         if (sourceWarning) sourceWarning.hidden = false;
         if (sourceStatus) sourceStatus.textContent = window.strmTranslate(message);
+        if (sourceDebug && sourceDebugContent) {
+          const body = extraInfo ? `${message}\n\n--- DEBUG ---\n${extraInfo}` : message;
+          sourceDebugContent.textContent = body;
+          sourceDebug.hidden = false;
+        }
         sourceSelect.replaceChildren();
         const option = document.createElement("option");
         option.value = "";
@@ -479,14 +490,28 @@
           cache: "no-store",
           signal: controller.signal,
         })
-          .then((response) => response.json().catch(() => ({})).then((data) => ({ status: response.status, data })))
-          .then(({ status, data }) => {
+          .then(async (response) => {
+            let payload = {};
+            try {
+              payload = await response.json();
+            } catch (error) {
+              payload = { message: await response.text().catch(() => ""), sources: [] };
+            }
+            return { status: response.status, data: payload, headers: Object.fromEntries(response.headers.entries()) };
+          })
+          .then(({ status, data, headers }) => {
+            const debugText = [
+              `URL: {{ url_for('decotv_sources_api') }}`,
+              `HTTP status: ${status}`,
+              `Headers: ${JSON.stringify(headers, null, 2)}`,
+              `Response body: ${JSON.stringify(data, null, 2)}`,
+            ].join("\n\n");
             if (status >= 400) {
-              showSourceLoadFailure(data.message || "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
+              showSourceLoadFailure(data.message || "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。", debugText);
               return;
             }
             if (!Array.isArray(data.sources)) {
-              showSourceLoadFailure("无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
+              showSourceLoadFailure("无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。", debugText);
               return;
             }
             const previouslySelected = parseCmsApis()[0];
@@ -503,16 +528,29 @@
                   data.message || "DecoTV 中没有可用视频源，请先在 DecoTV 中设置视频源。"
                 );
               }
+              if (sourceDebug && sourceDebugContent) {
+                sourceDebugContent.textContent = debugText;
+                sourceDebug.hidden = false;
+              }
               return triggerPreview();
             }
             if (sourceWarning) sourceWarning.hidden = true;
             if (sourceStatus) {
               sourceStatus.textContent = window.strmTranslate("已从 DecoTV 同步视频源。");
             }
+            if (sourceDebug && sourceDebugContent) {
+              sourceDebugContent.textContent = debugText;
+              sourceDebug.hidden = true;
+            }
             return triggerPreview();
           })
-          .catch(() => {
-            showSourceLoadFailure("无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
+          .catch((error) => {
+            const debugText = [
+              `URL: {{ url_for('decotv_sources_api') }}`,
+              `Error: ${error && error.message ? error.message : String(error)}`,
+              `Stack: ${error && error.stack ? error.stack : ""}`,
+            ].join("\n\n");
+            showSourceLoadFailure("无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。", debugText);
           })
           .finally(() => {
             window.clearTimeout(timeoutId);
