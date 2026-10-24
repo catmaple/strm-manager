@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-import os, re, sys, json, time, urllib.request, urllib.parse
+import os, re, sys, json, time, urllib.request, urllib.parse, urllib.error
 sys.path.insert(0, "/opt/m3u")
 import probe
 import seasons
+import decotv_search
 
 CONFIG = "/opt/m3u/config.json"
 HEALTH = "/opt/m3u/health.json"
@@ -30,8 +31,11 @@ def log(*a):
     print(time.strftime("%F %T"), *a, flush=True)
 
 
-def http_json(url):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+def http_json(url, cookie=""):
+    headers = {"User-Agent": UA}
+    if cookie:
+        headers["Cookie"] = cookie
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=25) as r:
         return json.load(r)
 
@@ -86,38 +90,92 @@ def scan_library():
     return items
 
 
+_COOKIE = None
+_SEARCH_SOURCES = None
+
+
+def get_cookie():
+    global _COOKIE
+    if _COOKIE is not None:
+        return _COOKIE
+    decotv = cfg.get("decotv", {})
+    username = (decotv.get("admin_username") or "").strip()
+    password = decotv.get("admin_password", "")
+    if not username or not password:
+        _COOKIE = cfg.get("cookie", "")
+        log("未配置 DecoTV 管理员凭证，使用 config.json cookie")
+        return _COOKIE
+
+    login_url = (decotv.get("url") or "http://decotv:3000").rstrip("/") + "/api/login"
+    body = json.dumps({"username": username, "password": password}).encode("utf-8")
+    request = urllib.request.Request(
+        login_url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": UA},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            cookies = response.headers.get_all("Set-Cookie") or []
+        _COOKIE = "; ".join(
+            part.split(";", 1)[0].strip()
+            for part in cookies
+            if part.split(";", 1)[0].strip()
+        )
+    except (OSError, urllib.error.URLError) as error:
+        log("DecoTV 登录失败:", type(error).__name__)
+        _COOKIE = cfg.get("cookie", "")
+    if not _COOKIE:
+        log("DecoTV 登录未获得 Cookie")
+    return _COOKIE
+
+
 def candidates(name, year, season=1):
+    global _SEARCH_SOURCES
+    cookie = get_cookie()
+    if _SEARCH_SOURCES is None:
+        _SEARCH_SOURCES = decotv_search.get_sources(cfg, cookie, http_json, log)
+
     out = []
-    for api in cfg["cms_apis"]:
-        url = f"{api}{'&' if '?' in api else '?'}ac=detail&wd={urllib.parse.quote(name)}"
-        try:
-            data = http_json(url)
-        except Exception as e:
-            log("  搜索失败:", api, e)
+    records = decotv_search.search_all(
+        cfg, name, _SEARCH_SOURCES, cookie, http_json, log
+    )
+    for source, video in records:
+        raw = video.get("vod_name", "")
+        tags = raw + (video.get("type_name") or "") + (video.get("vod_remarks") or "")
+        if any(word in tags for word in SKIP_WORDS):
             continue
-        host = urllib.parse.urlparse(api).netloc
-        for v in data.get("list", []):
-            raw = v.get("vod_name", "")
-            tags = raw + (v.get("type_name") or "") + (v.get("vod_remarks") or "")
-            if any(k in tags for k in SKIP_WORDS):
+        base, source_season, _ = seasons.parse_title(raw)
+        if not (
+            (base == name and source_season == season)
+            or (season == 1 and seasons.clean(raw) == name)
+        ):
+            continue
+        video_year = (video.get("vod_year") or "").strip()
+        if (
+            season == 1
+            and year
+            and video_year.isdigit()
+            and abs(int(video_year) - int(year)) > 1
+        ):
+            continue
+        groups = video.get("vod_play_url", "").split("$$$")
+        froms = video.get("vod_play_from", "").split("$$$")
+        for index, group in enumerate(groups):
+            if ".m3u8" not in group.lower():
                 continue
-            b, sn, _ = seasons.parse_title(raw)
-            if not ((b == name and sn == season) or (season == 1 and seasons.clean(raw) == name)):
-                continue
-            vy = (v.get("vod_year") or "").strip()
-            if season == 1 and year and vy.isdigit() and abs(int(vy) - int(year)) > 1:
-                continue
-            groups = v.get("vod_play_url", "").split("$$$")
-            froms = v.get("vod_play_from", "").split("$$$")
-            for i, g in enumerate(groups):
-                if ".m3u8" not in g:
-                    continue
-                eps = [e.split("$", 1) for e in g.split("#") if "$" in e]
-                eps = [(n, u.strip()) for n, u in eps if ".m3u8" in u]
-                if eps:
-                    ln = froms[i] if i < len(froms) else f"线路{i}"
-                    out.append({"label": f"{host}/{ln}", "eps": eps})
-        time.sleep(1)
+            episodes = [entry.split("$", 1) for entry in group.split("#") if "$" in entry]
+            episodes = [
+                (episode_name, url.strip())
+                for episode_name, url in episodes
+                if ".m3u8" in url.lower()
+            ]
+            if episodes:
+                line_name = froms[index] if index < len(froms) else f"线路{index}"
+                source_name = source.get("name") or urllib.parse.urlparse(
+                    source["api"]
+                ).netloc
+                out.append({"label": f"{source_name}/{line_name}", "eps": episodes})
     return out
 
 
@@ -192,7 +250,11 @@ def main():
             ok_n += 1
             continue
 
-        cands = candidates(name, year, it.get("season", 1))
+        try:
+            cands = candidates(name, year, it.get("season", 1))
+        except ValueError as error:
+            log("无法读取 DecoTV 搜索来源:", error)
+            cands = []
         need = len(it["files"])
         pool = [c for c in cands if len(c["eps"]) >= need and c["eps"][0][1] != cur_url]
         if pool:
@@ -249,4 +311,5 @@ def main():
         notify(msg)
 
 
-main()
+if __name__ == "__main__":
+    main()

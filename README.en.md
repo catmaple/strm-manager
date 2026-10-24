@@ -291,6 +291,8 @@ The default schedule uses the `TZ` time zone. The scheduled crawl uses `auto.py`
 
 The console lets you enable or disable the scheduler and individual jobs, change their run times, and choose `auto.py` (DecoTV default categories) or `crawl.py` (configured video sources) for the scheduled crawl. These are defaults and can be changed in the web form. The console also has buttons to start each task manually.
 
+When the current playback URL is unavailable or needs optimization, `recheck.py` uses `decotv_search.py` to search all enabled non-adult DecoTV sources and probe matching candidates. If DecoTV administrator credentials are not configured, it falls back to `cms_apis`.
+
 After a scheduled batch crawl (`auto.py` or `crawl.py`) completes successfully, movie reorganization runs automatically; there is no separate console button. It scans the TV library for single-season, single-file candidates and moves an item to Movies only when the configured CMS confirms it is a movie and its category, title/year, and STRM playback URL match unambiguously. Multi-episode directories, uncertain matches, and destination conflicts are left untouched and logged.
 
 Movies can be misclassified when a CMS category is mapped as TV or multiple movie playback links are interpreted as episodes. Crawl classification now prefers the CMS item's category and explicit season information, falling back to the configured category mapping when metadata is unclear. Review `crawl.sources` mappings if misclassification continues.
