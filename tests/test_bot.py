@@ -137,6 +137,31 @@ class TelegramSearchTests(unittest.TestCase):
 
     @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
     @patch.object(telegram_bot, "http_json")
+    def test_search_uses_source_name_instead_of_raw_url_label(
+        self, mock_http_json, _cookie
+    ):
+        telegram_bot.cfg["decotv"].update({
+            "admin_username": "admin",
+            "admin_password": "admin-secret",
+        })
+        mock_http_json.return_value = {"results": [{
+            "id": "movie-1",
+            "source": "source-one",
+            "source_name": "百度资源",
+            "title": "Example Movie",
+            "year": "2024",
+            "type_name": "电影",
+            "episodes": ["https://media.example/movie.m3u8"],
+            "episodes_titles": ["播放"],
+        }]}
+
+        results = telegram_bot.candidates("Example Movie")
+
+        self.assertEqual(results[0]["lines"][0]["label"], "百度资源")
+        self.assertEqual(results[0]["eps"][0], ("播放", "https://media.example/movie.m3u8"))
+
+    @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
+    @patch.object(telegram_bot, "http_json")
     def test_decotv_search_results_keep_page_order_and_filter_non_hls(
         self, mock_http_json, _cookie
     ):

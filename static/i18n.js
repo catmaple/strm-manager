@@ -166,6 +166,10 @@
 
   function translateText(value) {
     if (translations[value] !== undefined) return translations[value];
+    if (value === "、") return ", ";
+    if (value.startsWith("：") && translations[value.slice(1)] !== undefined) {
+      return ": " + translations[value.slice(1)];
+    }
     if (value.startsWith("DecoTV 管理员登录失败：HTTP ")) {
       return value
         .replace("DecoTV 管理员登录失败：HTTP ", "DecoTV administrator login failed: HTTP ")

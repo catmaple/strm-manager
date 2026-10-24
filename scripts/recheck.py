@@ -46,6 +46,31 @@ def fmt(s):
     return f"{s['mbps']:.1f}Mbps/需{s['need']:.1f} (余量{s['headroom']:.1f}x, 首包{s['ttfb']:.2f}s)"
 
 
+def route_label(source_name, line_name, fallback_host=""):
+    source = str(source_name or "").strip()
+    line = str(line_name or "").strip()
+    value = line.lower()
+    looks_like_url = (
+        value.startswith("http://")
+        or value.startswith("https://")
+        or "/api/" in value
+        or "api." in value
+        or ".m3u8" in value
+        or ".com" in value
+        or ".net" in value
+        or ".org" in value
+    )
+    if source and line and not looks_like_url:
+        return f"{source}/{line}"
+    if source:
+        return source
+    if line and looks_like_url:
+        return fallback_host or "DecoTV"
+    if line:
+        return line
+    return fallback_host or "DecoTV"
+
+
 def split_name(folder):
     m = re.match(r'^(.*?)\s*\((\d{4})\)$', folder)
     return (m.group(1), m.group(2)) if m else (folder, "")
@@ -175,7 +200,7 @@ def candidates(name, year, season=1):
                 source_name = source.get("name") or urllib.parse.urlparse(
                     source["api"]
                 ).netloc
-                out.append({"label": f"{source_name}/{line_name}", "eps": episodes})
+                out.append({"label": route_label(source_name, line_name, source_name), "eps": episodes})
     return out
 
 

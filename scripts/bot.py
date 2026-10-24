@@ -104,6 +104,34 @@ def parse_search_title(raw):
     return base, season, explicit, True
 
 
+def _looks_like_url(value):
+    value = str(value or "").strip().lower()
+    return bool(value) and (
+        value.startswith("http://")
+        or value.startswith("https://")
+        or "/api/" in value
+        or "api." in value
+        or ".m3u8" in value
+        or ".com" in value
+        or ".net" in value
+        or ".org" in value
+    )
+
+
+def _route_label(source_name, line_name, fallback_host=""):
+    source = str(source_name or "").strip()
+    line = str(line_name or "").strip()
+    if source and line and not _looks_like_url(line):
+        return f"{source}/{line}"
+    if source:
+        return source
+    if line and _looks_like_url(line):
+        return fallback_host or "DecoTV"
+    if line:
+        return line
+    return fallback_host or "DecoTV"
+
+
 def candidates(title):
     tbase, tseason, _, _ = parse_search_title(title)
     decotv = cfg.get("decotv", {})
@@ -184,7 +212,11 @@ def decotv_page_candidates(title):
                 "vod_total": len(eps),
             },
         )
-        line_label = str(item.get("source_name") or source or "DecoTV")
+        line_label = _route_label(
+            item.get("source_name") or source or "DecoTV",
+            None,
+            "DecoTV",
+        )
         results.append({
             "name": base,
             "full": seasons.clean(raw),
@@ -264,8 +296,9 @@ def cms_candidates(tbase, tseason):
             c["episode_marked"] = c["episode_marked"] or episode_marked
             if kind == "tv" or episode_marked:
                 c["kind"] = "tv"
+            source_name = source.get("name") or host
             for ln, eps in record_lines:
-                line_label = f"{host}/{ln}"
+                line_label = _route_label(source_name, ln, host)
                 line = next(
                     (entry for entry in c["lines"] if entry["label"] == line_label),
                     None,
