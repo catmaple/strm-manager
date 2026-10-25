@@ -289,6 +289,8 @@ docker compose exec strm-manager python /opt/m3u/crawl.py --types
 
 `auto.py` 从 `list_urls` 获取待处理片名；`crawl.py` 仍使用 `crawl.sources` 获取分类和视频 metadata。两者在查找实际播放链接时，都会读取 DecoTV 中所有已启用的非成人视频源并通过 DecoTV 代理逐源聚合搜索，不再局限于网页中 `cms_apis` 当前选中的单个源。请配置有效的 DecoTV 管理员凭证；凭证缺失时播放源搜索会回退到 `cms_apis`。
 
+网页上的 Dry Run 只模拟最多 3 部、最长约 90 秒（整体 180 秒超时），超时时会显示超时前的输出；每部作品的聚合搜索耗时会写入日志（“聚合搜索耗时”），便于判断 DecoTV 搜索是否过慢。
+
 重点：容器内脚本仍然使用 `/media/movies` 和 `/media/tv`，但它们分别映射到宿主机的 `/media/movies` 和 `/media/shows`。因此最终生成的 STRM 永远在宿主机 `/media/movies` 和 `/media/shows`，而不是项目目录 `data/media/`；Jellyfin 媒体库仍填写容器内路径 `/media/movies` 和 `/media/tv`。
 
 ## 8. 验证 STRM 入库与播放

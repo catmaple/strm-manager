@@ -38,6 +38,11 @@ def arg(name, default):
 
 
 MAX_NEW = arg("--new", cc.get("max_new_per_run", 150))
+DRY_MAX_NEW = 3
+DRY_DEADLINE = 90
+START_TIME = time.time()
+if DRY:
+    MAX_NEW = min(MAX_NEW, DRY_MAX_NEW)
 MAX_PAGES = arg("--pages", cc.get("max_pages_per_run", 80))
 TYPE_CAP = arg("--per-type", cc.get("per_type_new", 15))
 TYPE_PAGES = cc.get("per_type_pages", 10)
@@ -52,6 +57,10 @@ SCORE_FIELDS = {"douban": ["vod_douban_score"], "vod": ["vod_score"],
 
 def log(*a):
     print(time.strftime("%F %T"), *a, flush=True)
+
+
+def out_of_time():
+    return DRY and time.time() - START_TIME > DRY_DEADLINE
 
 
 _COOKIE = None
@@ -111,9 +120,11 @@ def find_playback(raw, year, configured_kind):
     cookie = get_cookie()
     if _SEARCH_SOURCES is None:
         _SEARCH_SOURCES = decotv_search.get_sources(cfg, cookie, http_json, log)
+    search_started = time.time()
     records = decotv_search.search_all(
         cfg, base, _SEARCH_SOURCES, cookie, http_json, log
     )
+    log(f"  聚合搜索耗时 {time.time() - search_started:.1f}s: {base}")
     candidates = {}
     for source, item in records:
         name = item.get("vod_name", "")
@@ -279,6 +290,9 @@ def scan(src, tid, kind, st):
             if counters["added"] >= MAX_NEW or counters["added"] - start_added >= TYPE_CAP:
                 partial = True
                 break
+            if out_of_time():
+                log(f"Dry Run 已达 {DRY_DEADLINE} 秒预算,提前结束")
+                return
             status, fresh = process_item(st, kind, v)
             if status in ("added", "updated"):
                 counters["added"] += 1
@@ -373,7 +387,7 @@ def main():
     log(f"开始:只收录 {MIN_YEAR} 年及以后的作品,本次最多新增 {MAX_NEW} 部,最多翻 {MAX_PAGES} 页"
         + (" [dry]" if DRY else ""))
     for src, tid, kind, key in tasks:
-        if counters["added"] >= MAX_NEW or counters["pages"] >= MAX_PAGES:
+        if counters["added"] >= MAX_NEW or counters["pages"] >= MAX_PAGES or out_of_time():
             break
         st = state.setdefault(key, {"next": 1, "done": False, "seen": {}, "claimed": {}})
         log(f"处理 {key} ({kind}):" + ("增量更新" if st["done"] else f"补库,从第 {st['next']} 页"))

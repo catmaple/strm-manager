@@ -769,22 +769,29 @@ def run_dry_run(config):
         if target.exists():
             original = target.read_text(encoding="utf-8")
         target.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
-        result = subprocess.run(
-            [sys.executable, "/opt/m3u/crawl.py", "--dry"],
+        process = subprocess.Popen(
+            [sys.executable, "-u", "/opt/m3u/crawl.py", "--dry"],
             cwd="/opt/m3u",
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=120,
-            check=False,
+            encoding="utf-8",
+            errors="replace",
         )
-        output = (result.stdout or "") + ("\n" + (result.stderr or "") if result.stderr else "")
-        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        timed_out = False
+        try:
+            output, _ = process.communicate(timeout=180)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            process.kill()
+            output, _ = process.communicate()
+        lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
         summary = "\n".join(lines[-20:]) or "Dry Run 已执行，但没有输出。"
-        return f"Dry Run 完成（退出码 {result.returncode}）\n{summary}"
+        if timed_out:
+            return f"Dry Run 失败：模拟抓取超时（180 秒），已终止。以下为超时前的输出：\n{summary}"
+        return f"Dry Run 完成（退出码 {process.returncode}）\n{summary}"
     except FileNotFoundError:
         return "Dry Run 失败：/opt/m3u/crawl.py 不存在，无法执行模拟抓取。"
-    except subprocess.TimeoutExpired:
-        return "Dry Run 失败：模拟抓取超时（120 秒）。"
     finally:
         if original is not None:
             target.write_text(original, encoding="utf-8")

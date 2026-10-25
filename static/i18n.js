@@ -148,6 +148,7 @@
     "配置未保存：": "Configuration was not saved: ",
     "配置保存失败：": "Failed to save configuration: ",
     "Dry Run 完成（退出码 ": "Dry Run completed (exit code ",
+    "Dry Run 失败：模拟抓取超时（180 秒），已终止。以下为超时前的输出：": "Dry Run failed: the simulated crawl timed out (180 seconds) and was stopped. Output before the timeout:",
     "已启动任务：": "Task started: ",
     "DecoTV：": "DecoTV: ",
     "DecoTV 登录：": "DecoTV login: ",

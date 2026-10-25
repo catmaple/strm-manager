@@ -32,6 +32,38 @@ class ScheduleDefaultsTests(unittest.TestCase):
         self.assertEqual(json.dumps(config, sort_keys=True), snapshot)
 
 
+class DryRunTimeoutTests(unittest.TestCase):
+    def test_timeout_returns_partial_output_and_restores_config(self):
+        import subprocess
+
+        class FakeProcess:
+            returncode = None
+            calls = 0
+            killed = False
+
+            def communicate(self, timeout=None):
+                FakeProcess.calls += 1
+                if FakeProcess.calls == 1:
+                    raise subprocess.TimeoutExpired("crawl", timeout)
+                return "line one\nline two\n", None
+
+            def kill(self):
+                FakeProcess.killed = True
+
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "config.json"
+            target.write_text('{"original": true}', encoding="utf-8")
+            real_path = manager.Path
+            with patch.object(
+                manager, "Path", side_effect=lambda value: target if value == "/opt/m3u/config.json" else real_path(value)
+            ), patch.object(manager.subprocess, "Popen", return_value=FakeProcess()):
+                message = manager.run_dry_run({"changed": True})
+            self.assertIn("超时", message)
+            self.assertIn("line two", message)
+            self.assertTrue(FakeProcess.killed)
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"original": True})
+
+
 class ConfigWebTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
