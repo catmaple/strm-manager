@@ -3,7 +3,7 @@ import os, re, sys, json, time, subprocess, urllib.request, urllib.parse, urllib
 import secrets
 import shutil
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 sys.path.insert(0, "/opt/m3u")
 import probe
 import seasons
@@ -352,10 +352,15 @@ def _short_probe_info(info):
     return " · ".join(parts) if parts else "测速失败"
 
 
+PROBE_MAX_CANDIDATES = 12
+PROBE_MAX_LINES = 3
+PROBE_DEADLINE = 40
+
+
 def annotate_search_results(cands):
-    """测速并剔除全部线路都失败的结果，其余按可用线路排序。"""
+    """测速并剔除全部线路都失败的结果，其余按可用线路排序；总耗时有上限。"""
     def probe_candidate(candidate):
-        lines = candidate.get("lines") or []
+        lines = (candidate.get("lines") or [])[:PROBE_MAX_LINES]
         if not lines:
             return None
         try:
@@ -364,10 +369,13 @@ def annotate_search_results(cands):
             log("搜索结果测速异常:", type(error).__name__)
             return None
 
-    with ThreadPoolExecutor(max_workers=min(8, max(1, len(cands)))) as pool:
-        results = list(pool.map(probe_candidate, cands))
+    pool = ThreadPoolExecutor(max_workers=min(8, max(1, len(cands))))
+    futures = [pool.submit(probe_candidate, candidate) for candidate in cands]
+    wait(futures, timeout=PROBE_DEADLINE)
+    pool.shutdown(wait=False, cancel_futures=True)
     usable = []
-    for candidate, ranked in zip(cands, results):
+    for candidate, future in zip(cands, futures):
+        ranked = future.result() if future.done() and not future.cancelled() else None
         if not ranked:
             continue
         candidate["lines"] = ranked
@@ -801,9 +809,16 @@ def search_and_reply(chat, title, direct=False):
     if direct and len(exact) == 1:
         show_add_sources(chat, exact[0])
         return
+    # 结果过多时优先保留标题完全匹配的，避免测速耗时过长和按钮超限
+    cands = (exact + [c for c in cands if c not in exact])[:PROBE_MAX_CANDIDATES]
     cache[chat] = cands
-    say(chat, "正在测速各搜索结果，请稍候……")
-    annotate_search_results(cands)
+    say(chat, f"正在测速 {len(cands)} 个搜索结果，请稍候……")
+    try:
+        annotate_search_results(cands)
+    except Exception as error:
+        log("搜索结果测速失败:", type(error).__name__, error)
+        say(chat, f"测速出错：{type(error).__name__}，请稍后重试。")
+        return
     if not cands:
         say(chat, "找到的播放源全部测速失败，暂无可用资源，请稍后重试或换个关键词。")
         return
