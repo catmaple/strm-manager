@@ -249,7 +249,7 @@ docker compose exec strm-manager python /opt/m3u/crawl.py --types
 
 `crawl.py --types` should list categories from configured sources. If `crawl.sources` is empty or a source is unreachable, fix the configuration before starting a full crawl.
 
-`auto.py` gets titles to process from `list_urls`; `crawl.py` continues to use `crawl.sources` for categories and video metadata. When resolving actual playback links, both read all enabled, non-adult DecoTV sources and search each through the DecoTV proxy, rather than being limited to the single `cms_apis` source selected in the web UI. Configure valid DecoTV administrator credentials; without them, playback searches fall back to `cms_apis`.
+`auto.py` gets titles from `list_urls`, which carry no playback links, so for each title it searches all enabled, non-adult DecoTV sources through DecoTV's aggregated search (up to 4 titles in parallel) and picks the fastest route. `crawl.py` uses `crawl.sources` for categories and video metadata; the records returned by a source already include playback links, so it uses that record's routes directly (still probing them to drop dead routes) instead of searching per item, and falls back to the DecoTV aggregated search only when the record has no usable route. `recheck.py` later switches routes across all sources when a link breaks or needs optimizing. Configure valid DecoTV administrator credentials; without them, the aggregated search falls back to `cms_apis`.
 
 ## Test STRM generation and playback
 
@@ -259,7 +259,7 @@ Start with a small Dry Run:
 docker compose exec strm-manager python /opt/m3u/crawl.py --dry --new 5 --pages 5
 ```
 
-Review the preview and confirm movie/TV classification. The Dry Run button in the web console runs in the background and does not block the page. It simulates in batches up to the configured limits, never modifies `config.json` or saves crawl state, queues behind any running job, and writes its result to the task log and sends it through the Telegram bot (3-hour maximum). The DecoTV aggregate-search time for each title is logged ("聚合搜索耗时"), which helps tell whether DecoTV search is slow. Scheduled jobs likewise run queued in the background and need no immediate result; `auto.py`, `crawl.py`, `recheck.py` and `stats.py` all notify through the Telegram bot when they finish (`auto.py` and `crawl.py` only when something was added). Then run a small real crawl using a category ID returned by `--types`:
+Review the preview and confirm movie/TV classification. The Dry Run button in the web console runs `crawl.py --dry` synchronously and shows the result on the page (300-second maximum; on timeout the process is stopped and the output so far is shown). It uses a temporary copy of the form config, never modifies `config.json`, and does not save crawl state. Scheduled jobs run queued in the background and need no immediate result; `auto.py`, `crawl.py`, `recheck.py` and `stats.py` all notify through the Telegram bot when they finish (`auto.py` and `crawl.py` only when something was added). Then run a small real crawl using a category ID returned by `--types`:
 
 ```bash
 docker compose exec strm-manager python /opt/m3u/crawl.py --new 5 --pages 5 --type 6
@@ -337,7 +337,7 @@ To use the Telegram bot, configure `telegram.token` and at least one authorized 
 | `/auto` | Runs one DecoTV chart/list crawl. |
 | `/recheck` | Runs a source recheck. |
 
-Telegram, `auto.py`, and `crawl.py` use an authenticated DecoTV administrator session to read all enabled, non-adult DecoTV sources and search each source through the DecoTV proxy when resolving playback links. Playback search is not limited to the single `cms_apis` source selected in the web UI. The source list is refreshed for each search/task run. `crawl.sources` continues to supply categories and video metadata; `auto.py` still gets its title list from `list_urls`. Without DecoTV administrator credentials, playback searches fall back to `cms_apis`. If no Jellyfin API key is configured, wait for Jellyfin's scheduled scan or trigger a library scan manually. Only search for and add content you are authorized to access.
+Telegram and `auto.py` use an authenticated DecoTV administrator session to read all enabled, non-adult DecoTV sources and search them through DecoTV's aggregated search; `crawl.py` uses the playback links in the source's own records and only falls back to that search when needed. Playback search is not limited to the single `cms_apis` source selected in the web UI. The source list is refreshed for each search/task run. `crawl.sources` continues to supply categories and video metadata; `auto.py` still gets its title list from `list_urls`. Without DecoTV administrator credentials, playback searches fall back to `cms_apis`. If no Jellyfin API key is configured, wait for Jellyfin's scheduled scan or trigger a library scan manually. Only search for and add content you are authorized to access.
 
 To obtain your Chat ID, send a message to the bot and read `message.chat.id` from the Telegram Bot API `getUpdates` response. Treat the Bot Token like a password. Never share API URLs containing the token, terminal output, or screenshots that expose it.
 

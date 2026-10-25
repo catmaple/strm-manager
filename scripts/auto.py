@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os, re, sys, json, time, urllib.request, urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, "/opt/m3u")
 import probe
 import seasons
@@ -10,6 +11,7 @@ STATE = "/opt/m3u/state.json"
 DRY = "--dry" in sys.argv
 UA = "Mozilla/5.0"
 SKIP_WORDS = ("预告", "花絮", "特辑")
+LOOKUP_WORKERS = 4
 
 cfg = json.load(open(CONFIG, encoding="utf-8"))
 state = json.load(open(STATE, encoding="utf-8")) if os.path.exists(STATE) else {}
@@ -121,7 +123,7 @@ def get_titles():
     return out
 
 
-def search(title, year, sources, cookie):
+def search(title, year, sources, cookie, log=log):
     base, season, _ = seasons.parse_title(title)
     full = seasons.clean(title)
     grouped = {}
@@ -198,6 +200,22 @@ def notify(text):
             log("Telegram 通知失败:", type(e).__name__)
 
 
+def lookup(title, year, sources, cookie):
+    """在工作线程中查找并测速;日志先缓存,由主线程按顺序输出,避免多线程交错。"""
+    lines = []
+
+    def buffered(*a):
+        lines.append(" ".join(str(x) for x in a))
+
+    try:
+        cands = search(title, year, sources, cookie, buffered)
+        hit = probe.pick(cands, buffered) if cands else None
+    except Exception as error:
+        buffered("  查找出错:", type(error).__name__)
+        return None, lines, False
+    return hit, lines, True
+
+
 def main():
     titles = get_titles()
     log(f"共发现 {len(titles)} 部不重复的片")
@@ -218,10 +236,11 @@ def main():
     added, now, lookups = 0, time.time(), 0
     retry = cfg.get("retry_miss_days", 3) * 86400
     lookup_version = "decotv-all-sources-v1"
+    max_new = cfg.get("max_new_per_run", 30)
+    max_lookups = cfg.get("max_lookups_per_run", 300)
+
+    pending = []
     for title, year in titles:
-        if added >= cfg.get("max_new_per_run", 30):
-            log("已达到本次新增上限")
-            break
         key = f"{title}|{year}"
         st = state.get(key)
         if st and st["s"] == "ok":
@@ -233,28 +252,47 @@ def main():
             and now - st["t"] < retry
         ):
             continue
-        if lookups >= cfg.get("max_lookups_per_run", 300):
-            log("已达到本次查找上限,剩余的留到下次")
-            break
-        lookups += 1
-        if lookups % 20 == 0 and not DRY:
-            seasons.atomic_write(STATE, json.dumps(state, ensure_ascii=False))
-        log("查找:", title, year)
-        cands = search(title, year, sources, cookie)
-        hit = probe.pick(cands, log) if cands else None
-        if hit:
-            log("  选用线路:", hit.get("label"), "|", hit.get("_info"))
-        if not hit:
-            log("  未找到")
-            state[key] = {"s": "miss", "t": now, "lookup_version": lookup_version}
-            continue
-        if DRY:
-            log(f"  [dry] 将生成: {hit['full']} ({hit['year']}) {len(hit['eps'])} 个")
-            continue
-        folder, n = seasons.write_strm(hit)
-        log(f"  已生成: {folder} ({n} 个)")
-        state[key] = {"s": "ok", "t": now}
-        added += 1
+        pending.append((title, year))
+
+    index = 0
+    with ThreadPoolExecutor(max_workers=LOOKUP_WORKERS) as pool:
+        while index < len(pending):
+            if added >= max_new:
+                log("已达到本次新增上限")
+                break
+            if lookups >= max_lookups:
+                log("已达到本次查找上限,剩余的留到下次")
+                break
+            batch = pending[index:index + LOOKUP_WORKERS][:max_lookups - lookups]
+            index += len(batch)
+            lookups += len(batch)
+            futures = [pool.submit(lookup, t, y, sources, cookie) for t, y in batch]
+            for (title, year), future in zip(batch, futures):
+                key = f"{title}|{year}"
+                hit, lines, ok = future.result()
+                log("查找:", title, year)
+                for line in lines:
+                    print(time.strftime("%F %T"), line, flush=True)
+                if not ok:
+                    continue
+                if hit:
+                    log("  选用线路:", hit.get("label"), "|", hit.get("_info"))
+                if not hit:
+                    log("  未找到")
+                    state[key] = {"s": "miss", "t": now, "lookup_version": lookup_version}
+                    continue
+                if added >= max_new:
+                    continue
+                if DRY:
+                    log(f"  [dry] 将生成: {hit['full']} ({hit['year']}) {len(hit['eps'])} 个")
+                    added += 1
+                    continue
+                folder, n = seasons.write_strm(hit)
+                log(f"  已生成: {folder} ({n} 个)")
+                state[key] = {"s": "ok", "t": now}
+                added += 1
+            if not DRY:
+                seasons.atomic_write(STATE, json.dumps(state, ensure_ascii=False))
     if not DRY:
         seasons.atomic_write(STATE, json.dumps(state, ensure_ascii=False))
         if added:
@@ -263,4 +301,5 @@ def main():
     log(f"完成,本次新增 {added} 部")
 
 
-main()
+if __name__ == "__main__":
+    main()

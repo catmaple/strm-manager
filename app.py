@@ -39,7 +39,7 @@ RUNTIME = {"job": None, "bot": "未运行", "last_job": "尚无定时任务"}
 BOT_PROCESS = None
 BOT_SIGNATURE = None
 STOP_EVENT = threading.Event()
-DRY_RUN_TIMEOUT = 3 * 60 * 60
+DRY_RUN_TIMEOUT = 300
 
 app = Flask(__name__, template_folder=str(APP_DIR / "templates"))
 app.secret_key = SESSION_SECRET
@@ -763,103 +763,42 @@ def tail_log(path, limit=60):
     return redact("\n".join(lines[-limit:]))
 
 
-def notify_telegram(config, text):
-    telegram = config.get("telegram") or {}
-    token = telegram.get("token")
-    if not token:
-        return False
-    sent = False
-    for chat_id in telegram.get("allowed_chat_ids") or []:
-        request_obj = urllib.request.Request(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data=json.dumps({"chat_id": chat_id, "text": text[:4000]}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            urllib.request.urlopen(request_obj, timeout=20).close()
-            sent = True
-        except Exception as error:
-            write_log("scheduler", f"Telegram 通知失败：{type(error).__name__}")
-    return sent
-
-
-def redact_with(text, config):
-    for value in sorted(set(secret_values(config)), key=len, reverse=True):
-        text = text.replace(value, "********")
-    return redact(text)
-
-
-def dry_run_job(config, config_path):
-    name = "Dry Run"
+def run_dry_run(config):
+    """同步运行 Dry Run 并返回结果；使用临时配置副本，不改动 config.json。"""
+    handle, config_path = tempfile.mkstemp(prefix="dry-run-", suffix=".json")
     try:
-        # 排在其他任务之后依次执行，不需要马上出结果
-        if not JOB_LOCK.acquire(blocking=False):
-            write_log("scheduler", f"{name} 等待其他任务完成后运行")
-            while not JOB_LOCK.acquire(timeout=5):
-                if STOP_EVENT.is_set():
-                    return
+        with os.fdopen(handle, "w", encoding="utf-8") as config_file:
+            json.dump(config, config_file, ensure_ascii=False)
         try:
-            with STATE_LOCK:
-                RUNTIME["job"] = name
-                RUNTIME["last_job"] = f"{name} 开始于 {datetime.now():%Y-%m-%d %H:%M:%S}"
-            write_log("scheduler", f"开始运行 {name}")
-            timed_out = False
-            try:
-                process = subprocess.Popen(
-                    [sys.executable, "-u", "/opt/m3u/crawl.py", "--dry"],
-                    cwd="/opt/m3u",
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    env={**os.environ, "STRM_CONFIG_PATH": str(config_path)},
-                )
-                try:
-                    output, _ = process.communicate(timeout=DRY_RUN_TIMEOUT)
-                except subprocess.TimeoutExpired:
-                    timed_out = True
-                    process.kill()
-                    output, _ = process.communicate()
-                returncode = process.returncode
-            except OSError as error:
-                output, returncode = f"启动失败：{error}", -1
-            lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
-            for line in lines:
-                write_log("dry-run", line)
-            summary = redact_with("\n".join(lines[-20:]) or "没有输出。", config)
-            if timed_out:
-                outcome = f"超时终止（{DRY_RUN_TIMEOUT} 秒）"
-            elif returncode == 0:
-                outcome = "完成"
-            else:
-                outcome = f"失败（退出码 {returncode}）"
-            write_log("scheduler", f"{name}{outcome}\n{summary}")
-            with STATE_LOCK:
-                RUNTIME["last_job"] = f"{name}{outcome}，{datetime.now():%Y-%m-%d %H:%M:%S}"
-            notify_telegram(config, f"Dry Run {outcome}\n{summary}")
-        finally:
-            with STATE_LOCK:
-                RUNTIME["job"] = None
-            JOB_LOCK.release()
+            process = subprocess.Popen(
+                [sys.executable, "-u", "/opt/m3u/crawl.py", "--dry"],
+                cwd="/opt/m3u",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env={**os.environ, "STRM_CONFIG_PATH": config_path},
+            )
+        except OSError as error:
+            return f"Dry Run 失败：无法启动 /opt/m3u/crawl.py（{error}）。"
+        timed_out = False
+        try:
+            output, _ = process.communicate(timeout=DRY_RUN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            process.kill()
+            output, _ = process.communicate()
+        lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+        summary = "\n".join(lines[-20:]) or "Dry Run 已执行，但没有输出。"
+        if timed_out:
+            return f"Dry Run 失败：模拟抓取超时（{DRY_RUN_TIMEOUT} 秒），已终止。以下为超时前的输出：\n{summary}"
+        return f"Dry Run 完成（退出码 {process.returncode}）\n{summary}"
     finally:
         try:
             os.unlink(config_path)
         except OSError:
             pass
-
-
-def run_dry_run(config):
-    """在后台运行 Dry Run，完成后写入日志并通过 Telegram 通知。"""
-    handle, config_path = tempfile.mkstemp(prefix="dry-run-", suffix=".json")
-    with os.fdopen(handle, "w", encoding="utf-8") as config_file:
-        json.dump(config, config_file, ensure_ascii=False)
-    threading.Thread(
-        target=dry_run_job, args=(config, config_path), name="dry-run", daemon=True
-    ).start()
-    if (config.get("telegram") or {}).get("token"):
-        return "Dry Run 已在后台启动，完成后会写入任务日志，并通过 Telegram 通知。"
-    return "Dry Run 已在后台启动，完成后会写入任务日志（未配置 Telegram）。"
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -975,7 +914,7 @@ def index():
             elif action == "dry_run":
                 message = run_dry_run(updated)
                 session["last_action_result"] = message
-                flash(message, "success")
+                flash(message, "error" if "失败" in message else "success")
             elif action == "generate_sources":
                 generated = discover_sources_from_cms_apis(submitted.get("cms_apis", []))
                 updated.setdefault("crawl", {})

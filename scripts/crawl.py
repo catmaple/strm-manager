@@ -99,23 +99,7 @@ def fetch(api, qs):
     return None
 
 
-def find_playback(raw, year, configured_kind):
-    global _SEARCH_SOURCES
-    base, season, _ = seasons.parse_title(raw)
-    if not base:
-        return None
-    year = str(year or "").strip()
-    cache_key = (base.casefold(), season, year, configured_kind)
-    if cache_key in _PLAYBACK_CACHE:
-        return _PLAYBACK_CACHE[cache_key]
-    cookie = get_cookie()
-    if _SEARCH_SOURCES is None:
-        _SEARCH_SOURCES = decotv_search.get_sources(cfg, cookie, http_json, log)
-    search_started = time.time()
-    records = decotv_search.search_all(
-        cfg, base, _SEARCH_SOURCES, cookie, http_json, log
-    )
-    log(f"  聚合搜索耗时 {time.time() - search_started:.1f}s: {base}")
+def build_choices(records, base, season, year, configured_kind):
     candidates = {}
     for source, item in records:
         name = item.get("vod_name", "")
@@ -148,7 +132,35 @@ def find_playback(raw, year, configured_kind):
                 for episode_name, url in episodes
                 if url not in existing_urls
             )
-    choices = list(candidates.values())
+    return list(candidates.values())
+
+
+def find_playback(raw, year, configured_kind, own=None):
+    """优先使用指定源返回的记录(已含播放链接);没有可用线路时才回退到 DecoTV 聚合搜索。"""
+    global _SEARCH_SOURCES
+    base, season, _ = seasons.parse_title(raw)
+    if not base:
+        return None
+    year = str(year or "").strip()
+    if own:
+        choices = build_choices([own], base, season, year, configured_kind)
+        selected = probe.pick(choices, log) if choices else None
+        if selected:
+            log("  指定源选用线路:", selected["label"], len(selected["eps"]), "集")
+            return selected
+        log("  指定源无可用线路,回退到 DecoTV 聚合搜索:", raw)
+    cache_key = (base.casefold(), season, year, configured_kind)
+    if cache_key in _PLAYBACK_CACHE:
+        return _PLAYBACK_CACHE[cache_key]
+    cookie = get_cookie()
+    if _SEARCH_SOURCES is None:
+        _SEARCH_SOURCES = decotv_search.get_sources(cfg, cookie, http_json, log)
+    search_started = time.time()
+    records = decotv_search.search_all(
+        cfg, base, _SEARCH_SOURCES, cookie, http_json, log
+    )
+    log(f"  聚合搜索耗时 {time.time() - search_started:.1f}s: {base}")
+    choices = build_choices(records, base, season, year, configured_kind)
     selected = probe.pick(choices, log) if choices else None
     _PLAYBACK_CACHE[cache_key] = selected
     if selected:
@@ -197,7 +209,7 @@ def exists_on_disk(r):
     return os.path.isdir(f"{seasons.MOVIE_ROOT}/{folder}")
 
 
-def process_item(st, kind, v):
+def process_item(st, kind, v, source_name="指定源"):
     """返回 (状态, 是否首次见到)。状态:added/updated/known/skipped"""
     vid = str(v.get("vod_id"))
     prev = st["seen"].get(vid)
@@ -216,7 +228,7 @@ def process_item(st, kind, v):
         return "skipped", fresh
     year = (v.get("vod_year") or "").strip()
     year = year if year.isdigit() else ""
-    playback = find_playback(raw, year, metadata_kind)
+    playback = find_playback(raw, year, metadata_kind, own=({"name": source_name}, v))
     if not playback:
         st["seen"][vid] = 0
         return "skipped", fresh
@@ -281,7 +293,7 @@ def scan(src, tid, kind, st):
             if counters["added"] >= MAX_NEW or counters["added"] - start_added >= TYPE_CAP:
                 partial = True
                 break
-            status, fresh = process_item(st, kind, v)
+            status, fresh = process_item(st, kind, v, src["name"])
             if status in ("added", "updated"):
                 counters["added"] += 1
                 changed = True
@@ -386,5 +398,5 @@ def main():
         refresh_jellyfin()
         notify(f"批量抓取完成:新增/更新 {counters['added']} 部")
 
-
-main()
+if __name__ == "__main__":
+    main()

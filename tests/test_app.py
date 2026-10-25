@@ -32,33 +32,25 @@ class ScheduleDefaultsTests(unittest.TestCase):
         self.assertEqual(json.dumps(config, sort_keys=True), snapshot)
 
 
-class DryRunBackgroundTests(unittest.TestCase):
-    def run_job(self, fake_process, config):
-        handle, path = tempfile.mkstemp(suffix=".json")
-        os.close(handle)
-        with patch.object(manager.subprocess, "Popen", return_value=fake_process) as popen, \
-                patch.object(manager, "notify_telegram") as notify, \
-                patch.object(manager, "write_log") as write_log:
-            manager.dry_run_job(config, path)
-        self.assertFalse(os.path.exists(path))
-        self.assertFalse(manager.JOB_LOCK.locked())
-        return popen, notify, write_log
+class DryRunTests(unittest.TestCase):
+    def run_dry(self, fake_process):
+        with patch.object(manager.subprocess, "Popen", return_value=fake_process) as popen:
+            message = manager.run_dry_run({"decotv": {"url": "http://decotv:3000"}})
+        return popen, message
 
-    def test_success_notifies_telegram_and_uses_private_config(self):
+    def test_success_returns_output_and_uses_private_config(self):
         class FakeProcess:
             returncode = 0
 
             def communicate(self, timeout=None):
                 return "line one\nline two\n", None
 
-        config = {"telegram": {"token": "123:secret-token", "allowed_chat_ids": [1]}}
-        popen, notify, _ = self.run_job(FakeProcess(), config)
+        popen, message = self.run_dry(FakeProcess())
         env = popen.call_args.kwargs["env"]
-        self.assertIn("STRM_CONFIG_PATH", env)
         self.assertNotEqual(env["STRM_CONFIG_PATH"], "/opt/m3u/config.json")
-        text = notify.call_args.args[1]
-        self.assertIn("完成", text)
-        self.assertIn("line two", text)
+        self.assertFalse(os.path.exists(env["STRM_CONFIG_PATH"]))
+        self.assertIn("Dry Run 完成（退出码 0）", message)
+        self.assertIn("line two", message)
 
     def test_timeout_kills_process_and_reports_partial_output(self):
         import subprocess
@@ -77,18 +69,10 @@ class DryRunBackgroundTests(unittest.TestCase):
             def kill(self):
                 FakeProcess.killed = True
 
-        _, notify, _ = self.run_job(FakeProcess(), {})
+        _, message = self.run_dry(FakeProcess())
         self.assertTrue(FakeProcess.killed)
-        text = notify.call_args.args[1]
-        self.assertIn("超时", text)
-        self.assertIn("partial output", text)
-
-    def test_run_dry_run_returns_immediately(self):
-        with patch.object(manager.threading, "Thread") as thread:
-            message = manager.run_dry_run({"telegram": {"token": "t"}})
-        self.assertTrue(thread.return_value.start.called)
-        self.assertIn("后台", message)
-        os.unlink(thread.call_args.kwargs["args"][1])
+        self.assertIn("超时", message)
+        self.assertIn("partial output", message)
 
 
 class ConfigWebTests(unittest.TestCase):

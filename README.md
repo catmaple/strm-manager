@@ -287,9 +287,9 @@ docker compose exec strm-manager python /opt/m3u/crawl.py --types
 
 `crawl.py --types` 应列出已配置源的分类。没有配置 `crawl.sources` 或源接口无法访问时，先回管理网页修正配置，不要开始大批量抓取。
 
-`auto.py` 从 `list_urls` 获取待处理片名；`crawl.py` 仍使用 `crawl.sources` 获取分类和视频 metadata。两者在查找实际播放链接时，都会读取 DecoTV 中所有已启用的非成人视频源并通过 DecoTV 代理逐源聚合搜索，不再局限于网页中 `cms_apis` 当前选中的单个源。请配置有效的 DecoTV 管理员凭证；凭证缺失时播放源搜索会回退到 `cms_apis`。
+`auto.py` 从 `list_urls` 获取待处理片名，没有播放链接，因此对每个片名读取 DecoTV 中所有已启用的非成人视频源并通过 DecoTV 聚合搜索，最多 4 个片名并发查找，并选取最快线路。`crawl.py` 使用 `crawl.sources` 获取分类和视频 metadata，源返回的记录已包含播放链接，直接使用该记录的线路（仍会测速剔除失效线路），不再逐条搜索；只有该记录没有可用线路时才回退到 DecoTV 聚合搜索。之后的 `recheck.py` 会在线路失效或需要优化时跨所有源换线。请配置有效的 DecoTV 管理员凭证；凭证缺失时聚合搜索会回退到 `cms_apis`。
 
-网页上的 Dry Run 在后台运行，不会阻塞页面：它按配置的数量上限分批模拟，不改动 `config.json`，也不保存抓取状态；若有其他任务在运行会排队等待，完成后写入任务日志并通过 Telegram 机器人通知（最长 3 小时）。每部作品的聚合搜索耗时会写入日志（“聚合搜索耗时”），便于判断 DecoTV 搜索是否过慢。定时任务同样在后台排队运行，不要求立即出结果；`auto.py`、`crawl.py`、`recheck.py` 和 `stats.py` 完成后都会通过 Telegram 机器人通知（`auto.py`、`crawl.py` 仅在有新增时通知）。
+网页上的 Dry Run 运行 `crawl.py --dry`，同步执行并直接在页面显示结果（最长 300 秒，超时会终止并显示超时前的输出）；它使用配置的临时副本，不改动 `config.json`，也不保存抓取状态。定时任务在后台排队运行，不要求立即出结果；`auto.py`、`crawl.py`、`recheck.py` 和 `stats.py` 完成后都会通过 Telegram 机器人通知（`auto.py`、`crawl.py` 仅在有新增时通知）。
 
 重点：容器内脚本仍然使用 `/media/movies` 和 `/media/tv`，但它们分别映射到宿主机的 `/media/movies` 和 `/media/shows`。因此最终生成的 STRM 永远在宿主机 `/media/movies` 和 `/media/shows`，而不是项目目录 `data/media/`；Jellyfin 媒体库仍填写容器内路径 `/media/movies` 和 `/media/tv`。
 
@@ -371,7 +371,7 @@ tail -n 100 data/manager/logs/recheck.log
 | `/auto` | 手动运行一次 DecoTV 榜单抓取 |
 | `/recheck` | 手动运行线路复测 |
 
-Telegram、`auto.py` 和 `crawl.py` 查找播放链接时，都会使用 DecoTV 管理员会话读取所有已启用的非成人视频源，并逐一通过 DecoTV 代理搜索；播放源搜索不受网页中当前选中的单个 `cms_apis` 来源限制。来源列表会在每次任务运行/搜索时读取。`crawl.sources` 仍用于抓取分类和视频 metadata；`auto.py` 的片名清单仍来自 `list_urls`。若未配置 DecoTV 管理员凭证，播放源搜索会退回 `cms_apis` 中的来源。若未配置 Jellyfin API Key，生成 STRM 后需等待 Jellyfin 定时扫描，或在 Jellyfin 中手动扫描媒体库。请只搜索和添加自己有权访问的内容。
+Telegram 和 `auto.py` 查找播放链接时，会使用 DecoTV 管理员会话读取所有已启用的非成人视频源并通过 DecoTV 聚合搜索；`crawl.py` 直接使用指定源返回记录中的播放链接，仅在需要时才回退到该搜索；播放源搜索不受网页中当前选中的单个 `cms_apis` 来源限制。来源列表会在每次任务运行/搜索时读取。`crawl.sources` 仍用于抓取分类和视频 metadata；`auto.py` 的片名清单仍来自 `list_urls`。若未配置 DecoTV 管理员凭证，播放源搜索会退回 `cms_apis` 中的来源。若未配置 Jellyfin API Key，生成 STRM 后需等待 Jellyfin 定时扫描，或在 Jellyfin 中手动扫描媒体库。请只搜索和添加自己有权访问的内容。
 
 获取 Chat ID 时，可先向机器人发送一条消息，再通过 Telegram Bot API 的 `getUpdates` 响应读取 `message.chat.id`。Bot Token 是密码，不要把带 Token 的 API URL、终端输出或截图分享给他人；配置完授权 ID 后不要再公开 Token。
 
