@@ -114,6 +114,7 @@
     "测试连接": "Test Connection",
     "Dry Run": "Dry Run",
     "DecoTV抓取": "Scan DecoTV",
+    "视频源抓取": "Scan Video Source",
     "指定源抓取": "Scan Video Source",
     "线路复测": "Recheck Sources",
     "统计数量": "Count Items",
