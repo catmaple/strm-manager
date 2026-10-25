@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import random
 import re
 import secrets
 import signal
@@ -225,6 +226,43 @@ def validate_config(config):
             if "weekday" in job and (not isinstance(job["weekday"], int) or not 0 <= job["weekday"] <= 6):
                 raise ValueError(f"scheduler.{job_name}.weekday 必须是 0 到 6 的整数")
     return config
+
+
+SCHEDULE_WINDOWS = {
+    "crawl": (1, 3),
+    "recheck": (5, 6),
+    "stats": (8, 11),
+}
+
+
+def fill_schedule_defaults(config, rng=random):
+    """Give each job a random run time once, so installs don't all fire together."""
+    scheduler = config.get("scheduler")
+    if not isinstance(scheduler, dict):
+        scheduler = config["scheduler"] = {}
+    changed = False
+    for name, (first_hour, last_hour) in SCHEDULE_WINDOWS.items():
+        job = scheduler.get(name)
+        if not isinstance(job, dict):
+            job = scheduler[name] = {}
+            changed = True
+        if "hour" not in job or "minute" not in job:
+            job["hour"] = rng.randint(first_hour, last_hour)
+            job["minute"] = rng.randint(0, 59)
+            changed = True
+        if name == "stats" and "weekday" not in job:
+            job["weekday"] = rng.randint(0, 6)
+            changed = True
+    return changed
+
+
+def ensure_schedule_defaults():
+    try:
+        config = load_config()
+        if fill_schedule_defaults(config):
+            save_config(config)
+    except (OSError, ValueError):
+        pass
 
 
 def save_config(config):
@@ -581,7 +619,7 @@ def config_from_form(form):
             "max_per_run": parse_form_int(form.get("recheck_max_per_run", ""), 0, 100000),
         },
         "crawl": {
-            "via_decotv": form.get("crawl_via_decotv") == "on",
+            "via_decotv": True,
             "sources": parse_form_json_list(form.get("crawl_sources", "[]")),
             "max_age_years": parse_form_int(form.get("crawl_max_age_years", ""), 0, 1000),
             "min_year": parse_form_int(form.get("crawl_min_year", ""), 0, 10000),
@@ -1199,6 +1237,7 @@ def main():
         )
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_schedule_defaults()
     atexit.register(shutdown)
     signal.signal(signal.SIGTERM, handle_shutdown_signal)
     signal.signal(signal.SIGINT, handle_shutdown_signal)

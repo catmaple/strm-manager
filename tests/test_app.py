@@ -9,6 +9,29 @@ from unittest.mock import patch
 import app as manager
 
 
+class ScheduleDefaultsTests(unittest.TestCase):
+    def test_fills_random_times_within_windows(self):
+        seen = set()
+        for _ in range(30):
+            config = {}
+            self.assertTrue(manager.fill_schedule_defaults(config))
+            sched = config["scheduler"]
+            self.assertTrue(1 <= sched["crawl"]["hour"] <= 3)
+            self.assertTrue(5 <= sched["recheck"]["hour"] <= 6)
+            self.assertTrue(8 <= sched["stats"]["hour"] <= 11)
+            self.assertTrue(0 <= sched["stats"]["weekday"] <= 6)
+            seen.add((sched["crawl"]["hour"], sched["crawl"]["minute"]))
+        self.assertGreater(len(seen), 1)
+
+    def test_keeps_existing_values(self):
+        config = {"scheduler": {"crawl": {"hour": 2, "minute": 0, "script": "crawl"}}}
+        manager.fill_schedule_defaults(config)
+        self.assertEqual(config["scheduler"]["crawl"], {"hour": 2, "minute": 0, "script": "crawl"})
+        snapshot = json.dumps(config, sort_keys=True)
+        self.assertFalse(manager.fill_schedule_defaults(config))
+        self.assertEqual(json.dumps(config, sort_keys=True), snapshot)
+
+
 class ConfigWebTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -132,7 +155,7 @@ class ConfigWebTests(unittest.TestCase):
             "切换线路所需提升倍数",
             "线路复测间隔（天）",
             "每次复测最大线路数",
-            "通过 DecoTV 代理抓取",
+
             "跳过未标注年份的视频",
             "评分来源",
             "最低评分",
@@ -148,7 +171,7 @@ class ConfigWebTests(unittest.TestCase):
             "抓取请求间隔（秒）",
         ):
             self.assertIn(label, body)
-        self.assertIn('<option value="douban"', body)
+        self.assertNotIn("crawl_via_decotv", body)
         self.assertIn('<option value="vod"', body)
         self.assertIn('<option value="any"', body)
         self.assertNotIn("自动整理电影分类", body)

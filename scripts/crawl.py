@@ -19,6 +19,14 @@ _SEARCH_SOURCES = None
 _PLAYBACK_CACHE = {}
 
 
+def http_json(url, cookie=""):
+    headers = {"User-Agent": UA}
+    if cookie:
+        headers["Cookie"] = cookie
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=25) as r:
+        return json.load(r)
+
+
 def arg(name, default):
     if name in sys.argv:
         i = sys.argv.index(name)
@@ -76,14 +84,11 @@ def get_cookie():
 def fetch(api, qs):
     target = api.rstrip("/") + "/?" + urllib.parse.urlencode(qs)
     headers = {"User-Agent": UA}
-    if cc.get("via_decotv", False):
-        decotv_url = cfg.get("decotv", {}).get("url", "http://decotv:3000").rstrip("/")
-        url = decotv_url + "/api/proxy/cms?url=" + urllib.parse.quote(target, safe="")
-        ck = get_cookie()
-        if ck:
-            headers["Cookie"] = ck
-    else:
-        url = target
+    decotv_url = cfg.get("decotv", {}).get("url", "http://decotv:3000").rstrip("/")
+    url = decotv_url + "/api/proxy/cms?url=" + urllib.parse.quote(target, safe="")
+    ck = get_cookie()
+    if ck:
+        headers["Cookie"] = ck
     for i in range(3):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as r:
