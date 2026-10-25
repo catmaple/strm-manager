@@ -127,7 +127,7 @@ def pick(cands, log=print):
         resolution = f"{s['resolution']} / " if s.get("resolution") else ""
         c["_info"] = (
             f"{resolution}{s['mbps']:.1f}Mbps/需{s['need']:.1f}, "
-            f"首包{s['ttfb']:.2f}s"
+            f"{s['ttfb']:.2f}s"
         )
         log(f"  线路 {name}: {c['_info']}")
         key = (min(s["headroom"], 8.0), -s["ttfb"])
@@ -164,7 +164,7 @@ def rank(cands, log=print):
         resolution = resolution or "分辨率未知"
         candidate["_info"] = (
             f"{resolution} / {info['mbps']:.1f}Mbps/需{info['need']:.1f}, "
-            f"首包{info['ttfb']:.2f}s"
+            f"{info['ttfb']:.2f}s"
         )
         candidate["_rank"] = (min(info["headroom"], 8.0), -info["ttfb"])
         ranked.append(candidate)

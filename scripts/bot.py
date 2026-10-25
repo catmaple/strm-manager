@@ -342,32 +342,38 @@ def label(c):
 
 
 def _short_probe_info(info):
-    # "1920x1080 / 12.5Mbps/需2.1, 首包0.31s" -> "1920x1080 · 首包0.31s"
+    # "1920x1080 / 12.5Mbps/需2.1, 0.31s" -> "1920x1080 · 0.31s"
     info = str(info or "")
-    first_byte = re.search(r"首包\s*[\d.]+s", info)
+    first_byte = re.search(r"([\d.]+s)\s*$", info)
     resolution = info.split(" / ", 1)[0] if " / " in info else ""
     if resolution and "Mbps" in resolution:
         resolution = ""
-    parts = [part for part in (resolution, first_byte.group(0) if first_byte else "") if part]
+    parts = [part for part in (resolution, first_byte.group(1) if first_byte else "") if part]
     return " · ".join(parts) if parts else "测速失败"
 
 
 def annotate_search_results(cands):
+    """测速并剔除全部线路都失败的结果，其余按可用线路排序。"""
     def probe_candidate(candidate):
         lines = candidate.get("lines") or []
         if not lines:
-            return "测速失败"
+            return None
         try:
-            ranked = probe.rank([dict(lines[0])], log)
+            return probe.rank([dict(line) for line in lines], log)
         except Exception as error:
             log("搜索结果测速异常:", type(error).__name__)
-            return "测速失败"
-        return _short_probe_info(ranked[0].get("_info")) if ranked else "测速失败"
+            return None
 
     with ThreadPoolExecutor(max_workers=min(8, max(1, len(cands)))) as pool:
-        infos = list(pool.map(probe_candidate, cands))
-    for candidate, info in zip(cands, infos):
-        candidate["_probe"] = info
+        results = list(pool.map(probe_candidate, cands))
+    usable = []
+    for candidate, ranked in zip(cands, results):
+        if not ranked:
+            continue
+        candidate["lines"] = ranked
+        candidate["_probe"] = _short_probe_info(ranked[0].get("_info"))
+        usable.append(candidate)
+    cands[:] = usable
 
 
 def search_result_button_label(candidate):
@@ -798,6 +804,9 @@ def search_and_reply(chat, title, direct=False):
     cache[chat] = cands
     say(chat, "正在测速各搜索结果，请稍候……")
     annotate_search_results(cands)
+    if not cands:
+        say(chat, "找到的播放源全部测速失败，暂无可用资源，请稍后重试或换个关键词。")
+        return
     buttons = [[{"text": search_result_button_label(c), "callback_data": f"add:{i}"}]
                for i, c in enumerate(cands)]
     say(chat, "请选择要加入的版本:", buttons)

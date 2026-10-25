@@ -770,7 +770,7 @@ class TelegramSearchTests(unittest.TestCase):
             telegram_bot.probe,
             "rank",
             side_effect=lambda lines, _log: [
-                {**lines[0], "_info": "1920x1080 / 9.0Mbps/需2.0, 首包0.30s"}
+                {**lines[0], "_info": "1920x1080 / 9.0Mbps/需2.0, 0.30s"}
             ],
         ):
             telegram_bot.search_and_reply(123, "Example Movie")
@@ -778,8 +778,35 @@ class TelegramSearchTests(unittest.TestCase):
         buttons = mock_say.call_args.args[2]
         self.assertIn("Source One", buttons[0][0]["text"])
         self.assertIn("Source Two", buttons[1][0]["text"])
-        self.assertIn("1920x1080 · 首包0.30s", buttons[0][0]["text"])
+        self.assertIn("1920x1080 · 0.30s", buttons[0][0]["text"])
         self.assertNotEqual(buttons[0][0]["text"], buttons[1][0]["text"])
+
+    def test_search_results_drop_candidates_whose_routes_all_fail_probe(self):
+        def make(name, url):
+            return {
+                "name": "Example Movie", "full": "Example Movie", "season": 1,
+                "explicit": False, "year": "2024", "kind": "movie",
+                "eps": [("播放", url)],
+                "lines": [{"label": name, "eps": [("播放", url)]}],
+            }
+
+        candidates = [make("Dead", "https://dead.example/m.m3u8"), make("Live", "https://live.example/m.m3u8")]
+
+        def fake_rank(lines, _log):
+            return [
+                {**line, "_info": "1920x1080 / 9.0Mbps/需2.0, 0.30s"}
+                for line in lines if "live" in line["eps"][0][1]
+            ]
+
+        with patch.object(telegram_bot, "candidates", return_value=candidates), patch.object(
+            telegram_bot, "say"
+        ) as mock_say, patch.object(telegram_bot.probe, "rank", side_effect=fake_rank):
+            telegram_bot.search_and_reply(123, "Example Movie")
+
+        buttons = mock_say.call_args.args[2]
+        self.assertEqual(len(buttons), 1)
+        self.assertIn("Live", buttons[0][0]["text"])
+        self.assertNotIn("测速失败", buttons[0][0]["text"])
 
     def test_edit_series_probes_first_episode_and_retains_full_source(self):
         item = {
