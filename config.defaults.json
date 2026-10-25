@@ -31,7 +31,6 @@
     "max_per_run": 40
   },
   "crawl": {
-    "via_decotv": true,
     "sources": [],
     "max_age_years": 20,
     "min_year": 0,

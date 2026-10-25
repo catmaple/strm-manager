@@ -841,11 +841,28 @@ class ConfigWebTests(unittest.TestCase):
             "/",
             data={
                 "csrf_token": "test-csrf",
-                "config_json": '{"crawl":{"via_decotv":"yes"}}',
+                "config_json": '{"crawl":{"skip_unknown_year":"yes"}}',
             },
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.config_path.read_text(encoding="utf-8"), original)
+
+    def test_obsolete_via_decotv_option_is_removed_on_save(self):
+        self.authenticate()
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["crawl"] = {"via_decotv": True, "sources": []}
+        self.config_path.write_text(json.dumps(config), encoding="utf-8")
+        response = self.client.post(
+            "/",
+            data={
+                "csrf_token": "test-csrf",
+                "config_json": '{"crawl":{"max_age_years":5}}',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertNotIn("via_decotv", saved["crawl"])
+        self.assertEqual(saved["crawl"]["max_age_years"], 5)
 
     def test_post_requires_csrf(self):
         self.authenticate()

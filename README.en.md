@@ -227,7 +227,6 @@ The web form manages the existing `config.json` format. Use Docker service names
     "api_key": "JELLYFIN API KEY"
   },
   "crawl": {
-    "via_decotv": true,
     "sources": []
   }
 }
@@ -377,7 +376,7 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 |---|---|
 | Console is unavailable | Run `docker compose ps` and `docker compose logs --tail 100 strm-manager`; verify the admin password is at least 12 characters and the session secret is at least 32 characters. |
 | DecoTV reports local storage or Redis errors | Inspect `docker compose logs --tail 100 decotv decotv-redis`; verify the Redis environment variables supported by your DecoTV version. |
-| Source categories cannot be discovered | Check CMS URLs, `crawl.sources`, `crawl.via_decotv`, and the DecoTV login endpoint/payload expected by the deployed version. |
+| Source categories cannot be discovered | Check CMS URLs, `crawl.sources`, and the DecoTV login endpoint/payload expected by the deployed version. |
 | STRM files exist but Jellyfin shows no items | Check host paths `/media/movies` and `/media/shows`; in Jellyfin, library paths must be `/media/movies` and `/media/tv`. Then scan the library. |
 | HLS playback fails | Confirm Jellyfin uses `/usr/lib/jellyfin-ffmpeg/ffmpeg`; test a real HLS URL with `/usr/lib/jellyfin-ffmpeg/ffprobe` and inspect the FFmpeg transcode log for the specific failure. |
 | GHCR image pull fails | Confirm the image has been published and the GitHub Packages are public; authenticate with `docker login ghcr.io` if the packages are private. |

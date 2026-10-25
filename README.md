@@ -267,7 +267,6 @@ docker compose up -d strm-manager
     "api_key": "填入 Jellyfin API Key"
   },
   "crawl": {
-    "via_decotv": true,
     "sources": []
   }
 }
@@ -413,7 +412,7 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 |---|---|
 | 管理页面打不开 | `docker compose ps`、`docker compose logs --tail 100 strm-manager`；确认 `.env` 管理密码不少于 12 位、Session Secret 不少于 32 位 |
 | DecoTV 一直显示本地存储或日志 Redis 连接失败 | `docker compose logs --tail 100 decotv decotv-redis`；手册中使用的 `REDIS_URL` 需按当前 DecoTV 版本确认 |
-| 源分类查询失败 | 检查 `config.json` 的 CMS 地址、`crawl.sources` 和 `via_decotv`；确认 DecoTV 登录 API 路径和请求字段适用于当前版本 |
+| 源分类查询失败 | 检查 `config.json` 的 CMS 地址和 `crawl.sources`；确认 DecoTV 登录 API 路径和请求字段适用于当前版本 |
 | STRM 已生成但 Jellyfin 无内容 | 检查宿主机 `/media/movies`、`/media/shows` 是否有文件；Jellyfin 容器内媒体库路径应为 `/media/movies`、`/media/tv`，再触发库扫描 |
 | HLS 剧集无法播放 | 确认 Jellyfin FFmpeg path 是 `/usr/lib/jellyfin-ffmpeg/ffmpeg`，并用真实 m3u8 地址测试 `/usr/lib/jellyfin-ffmpeg/ffprobe`；查看 FFmpeg 转码日志确认具体失败原因 |
 | GHCR 拉取失败 | 检查镜像是否已由 GitHub Actions 发布，以及 GitHub Packages 是否设为 Public；私有包需要先 `docker login ghcr.io` |

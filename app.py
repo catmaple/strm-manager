@@ -178,7 +178,7 @@ def validate_config(config):
                 isinstance(value, bool) or not isinstance(value, (int, float))
             ):
                 raise ValueError(f"crawl.{key} 必须是数字")
-        for key in ("via_decotv", "skip_unknown_year"):
+        for key in ("skip_unknown_year",):
             value = crawl.get(key)
             if value is not None and not isinstance(value, bool):
                 raise ValueError(f"crawl.{key} 必须是 true 或 false")
@@ -621,7 +621,6 @@ def config_from_form(form):
             "max_per_run": parse_form_int(form.get("recheck_max_per_run", ""), 0, 100000),
         },
         "crawl": {
-            "via_decotv": True,
             "sources": parse_form_json_list(form.get("crawl_sources", "[]")),
             "max_age_years": parse_form_int(form.get("crawl_max_age_years", ""), 0, 1000),
             "min_year": parse_form_int(form.get("crawl_min_year", ""), 0, 10000),
@@ -677,7 +676,7 @@ def config_from_form(form):
         if key in {"max_new_per_run", "max_pages", "max_lookups_per_run", "retry_miss_days"} and config[key] is None:
             config.pop(key)
     for key in list(config["crawl"].keys()):
-        if key in {"via_decotv", "skip_unknown_year"}:
+        if key == "skip_unknown_year":
             continue
         if config["crawl"][key] is None:
             config["crawl"].pop(key)
@@ -903,6 +902,8 @@ def index():
                 submitted = config_from_form(request.form)
             merged = merge_config(current, submitted)
             merged.pop("login", None)
+            if isinstance(merged.get("crawl"), dict):
+                merged["crawl"].pop("via_decotv", None)
             validate_config(merged)
             updated = restore_blank_secrets(merged, current)
             validate_config(updated)
