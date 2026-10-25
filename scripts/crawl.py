@@ -94,18 +94,6 @@ def fetch(api, qs):
     return None
 
 
-def pick_eps(v):
-    best = None
-    for g in v.get("vod_play_url", "").split("$$$"):
-        if ".m3u8" not in g:
-            continue
-        eps = [e.split("$", 1) for e in g.split("#") if "$" in e]
-        eps = [(n, u.strip()) for n, u in eps if ".m3u8" in u]
-        if eps and (best is None or len(eps) > len(best)):
-            best = eps
-    return best
-
-
 def find_playback(raw, year, configured_kind):
     global _SEARCH_SOURCES
     base, season, _ = seasons.parse_title(raw)
@@ -134,21 +122,7 @@ def find_playback(raw, year, configured_kind):
         item_year = item_year if item_year.isdigit() else ""
         if year and item_year and abs(int(item_year) - int(year)) > 1:
             continue
-        for index, group in enumerate(str(item.get("vod_play_url") or "").split("$$$")):
-            episodes = [
-                entry.split("$", 1)
-                for entry in group.split("#")
-                if "$" in entry
-            ]
-            episodes = [
-                (episode_name, url.strip())
-                for episode_name, url in episodes
-                if ".m3u8" in url.lower()
-            ]
-            if not episodes:
-                continue
-            sources = str(item.get("vod_play_from") or "").split("$$$")
-            line_name = sources[index] if index < len(sources) else f"线路{index}"
+        for line_name, episodes in seasons.parse_play_lines(item):
             line_label = f"{source['name']}/{line_name}"
             key = (item_base, item_season, item_year, line_label)
             candidate = candidates.setdefault(key, {

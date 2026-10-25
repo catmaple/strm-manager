@@ -2,7 +2,7 @@
 import os, re, sys, json, time, subprocess, urllib.request, urllib.parse, urllib.error
 import secrets
 import shutil
-import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor, wait
 sys.path.insert(0, "/opt/m3u")
 import probe
@@ -211,7 +211,8 @@ def decotv_page_candidates(title):
             {
                 "type_name": item.get("type_name"),
                 "vod_remarks": item.get("remarks"),
-                "vod_total": len(eps),
+                # 用集名判断分集；仅凭条目数量会把"国语/粤语"等多版本电影误判为剧集
+                "vod_play_url": "#".join(f"{name}${url}" for name, url in eps),
             },
         )
         line_label = _route_label(
@@ -270,20 +271,7 @@ def cms_candidates(tbase, tseason):
                 continue
             vy = (v.get("vod_year") or "").strip()
             vy = vy if vy.isdigit() else ""
-            groups = v.get("vod_play_url", "").split("$$$")
-            froms = v.get("vod_play_from", "").split("$$$")
-            record_lines = []
-            for i, g in enumerate(groups):
-                eps = [e.split("$", 1) for e in g.split("#") if "$" in e]
-                eps = [
-                    (n, u.strip())
-                    for n, u in eps
-                    if ".m3u8" in u.lower()
-                ]
-                if not eps:
-                    continue
-                ln = froms[i] if i < len(froms) else f"线路{i}"
-                record_lines.append((ln, eps))
+            record_lines = seasons.parse_play_lines(v)
             if not record_lines:
                 continue
             added_from_source += 1
@@ -293,11 +281,11 @@ def cms_candidates(tbase, tseason):
                 "explicit": explicit, "year": vy,
                 "kind": kind,
                 "lang": v.get("vod_lang") or "", "lines": [],
-                "record_count": 0, "episode_marked": False})
+                "record_count": 0, "episode_marked": False,
+                "votes": {"tv": 0, "movie": 0}})
             c["record_count"] += 1
             c["episode_marked"] = c["episode_marked"] or episode_marked
-            if kind == "tv" or episode_marked:
-                c["kind"] = "tv"
+            c["votes"]["tv" if kind == "tv" or episode_marked else "movie"] += 1
             source_name = source.get("name") or host
             for ln, eps in record_lines:
                 line_label = _route_label(source_name, ln, host)
@@ -315,19 +303,29 @@ def cms_candidates(tbase, tseason):
                         existing_urls.add(episode_url)
         log("CMS 搜索可用记录数:", host, added_from_source)
     res = list(out.values())
+    # 仅当同名同年份出现多个"明确的季"时才据此判定为剧集；"第N部"属于电影续集，不算
     season_groups = {}
     for c in res:
-        season_groups.setdefault((c["name"], c["year"]), set()).add(c["season"])
+        group = season_groups.setdefault((c["name"], c["year"]), {"seasons": set(), "explicit": False})
+        group["seasons"].add(c["season"])
+        group["explicit"] = group["explicit"] or c["explicit"]
     for c in res:
+        group = season_groups[(c["name"], c["year"])]
+        votes = c["votes"]
+        # 多数投票决定类型；平局时沿用相关性最高（最先出现）的记录的判断
+        if votes["tv"] != votes["movie"]:
+            c["kind"] = "tv" if votes["tv"] > votes["movie"] else "movie"
         if (
-            (c["episode_marked"] and c["record_count"] > 1)
-            or len(season_groups[(c["name"], c["year"])]) > 1
+            c["explicit"]
+            or (c["episode_marked"] and c["record_count"] > 1)
+            or (len(group["seasons"]) > 1 and group["explicit"])
         ):
             c["kind"] = "tv"
     for c in res:
         c["eps"] = max(c["lines"], key=lambda l: len(l["eps"]))["eps"]  # 仅用于显示
         c.pop("record_count", None)
         c.pop("episode_marked", None)
+        c.pop("votes", None)
     res.sort(key=lambda c: not (c["name"] == tbase and c["season"] == tseason))
     return res[:8]
 
@@ -369,19 +367,31 @@ def merge_versions(cands):
         )
         existing = merged.get(key)
         if existing is None:
+            candidate["_votes"] = {"tv": 0, "movie": 0}
+            candidate["_votes"]["tv" if candidate.get("kind") == "tv" else "movie"] += 1
             merged[key] = candidate
             order.append(key)
             continue
+        existing["_votes"]["tv" if candidate.get("kind") == "tv" else "movie"] += 1
+        existing["explicit"] = existing.get("explicit") or candidate.get("explicit")
         known = {line.get("label") for line in existing.get("lines", [])}
         for line in candidate.get("lines", []):
             if line.get("label") not in known:
                 existing.setdefault("lines", []).append(line)
                 known.add(line.get("label"))
-        if candidate.get("kind") == "tv":
-            existing["kind"] = "tv"
         if candidate.get("lines") and len(candidate.get("eps", [])) > len(existing.get("eps", [])):
             existing["eps"] = candidate["eps"]
-    return [merged[key] for key in order]
+    result = []
+    for key in order:
+        version = merged[key]
+        votes = version.pop("_votes")
+        # 多数来源的判断为准，避免个别来源把电影标成剧集（或相反）后带偏整个版本
+        if votes["tv"] != votes["movie"]:
+            version["kind"] = "tv" if votes["tv"] > votes["movie"] else "movie"
+        if version.get("explicit"):
+            version["kind"] = "tv"
+        result.append(version)
+    return result
 
 
 def annotate_search_results(cands):
@@ -611,8 +621,15 @@ def show_edit_sources(chat, item):
             continue
         for line in result["lines"]:
             episode_urls = line["eps"]
+            # 类型必须一致，避免把电影的地址写进剧集（或把剧集首集写进电影）
+            if item["kind"] == "movie" and result["kind"] == "tv" and len(episode_urls) > 1:
+                continue
+            if item["kind"] == "tv" and result["kind"] == "movie":
+                continue
             if item["kind"] == "tv":
-                if len(episode_urls) < len(item["files"]):
+                try:
+                    map_episode_urls(item, episode_urls)
+                except ValueError:
                     skipped_incomplete += 1
                     continue
                 choice_eps = episode_urls[:1]
@@ -673,20 +690,34 @@ def show_edit_sources(chat, item):
         note = "\n（当前使用的线路不在可用列表中，可能已失效或测速失败）"
     say(chat, f"请选择要用于 {item_label(item)} 的播放线路：{note}", buttons)
     if skipped_incomplete:
-        say(chat, f"另有 {skipped_incomplete} 条线路集数少于本地 {len(item['files'])} 集，已隐藏以免覆盖不完整。")
+        say(chat, f"另有 {skipped_incomplete} 条线路缺少本地已有的部分集数（共 {len(item['files'])} 集），已隐藏以免覆盖不完整。")
+
+
+def _local_episode_number(path):
+    match = re.search(r"S\d+E(\d+)", re.split(r"[\\/]", path)[-1], re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def map_episode_urls(item, episode_urls):
+    """返回 [(本地 STRM 路径, 新地址)]。剧集按集号对应，线路缺任一本地集号则抛错。"""
+    if item["kind"] == "movie":
+        if not episode_urls:
+            raise ValueError("所选线路没有可写入的播放地址")
+        return [(item["files"][0], episode_urls[0][1])]
+    incomplete = "所选线路集数少于本地 STRM 文件数，已取消更新"
+    local_numbers = [_local_episode_number(path) for path in item["files"]]
+    if None in local_numbers:
+        if len(episode_urls) < len(item["files"]):
+            raise ValueError(incomplete)
+        return list(zip(item["files"], [url for _name, url in episode_urls]))
+    by_number = dict(seasons.number_episodes(episode_urls))
+    if any(number not in by_number for number in local_numbers):
+        raise ValueError(incomplete)
+    return [(path, by_number[number]) for path, number in zip(item["files"], local_numbers)]
 
 
 def update_item_source(item, line):
-    episode_urls = line.get("series_eps") or line["eps"]
-    urls = [url for _name, url in episode_urls]
-    if item["kind"] == "movie":
-        if not urls:
-            raise ValueError("所选线路没有可写入的播放地址")
-        updates = [(item["files"][0], urls[0])]
-    else:
-        if len(urls) < len(item["files"]):
-            raise ValueError("所选线路集数少于本地 STRM 文件数，已取消更新")
-        updates = list(zip(item["files"], urls))
+    updates = map_episode_urls(item, line.get("series_eps") or line["eps"])
 
     staged = []
     try:
@@ -698,12 +729,7 @@ def update_item_source(item, line):
                 or not os.path.isfile(path)
             ):
                 raise ValueError("本地 STRM 文件已不存在或位于媒体库目录之外")
-            descriptor, temporary = tempfile.mkstemp(
-                prefix=".strm-", suffix=".tmp", dir=os.path.dirname(path)
-            )
-            staged.append((temporary, path))
-            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-                output.write(url + "\n")
+            staged.append((seasons.stage_write(path, url + "\n"), path))
         for temporary, path in staged:
             os.replace(temporary, path)
     finally:
@@ -864,15 +890,28 @@ def search_and_reply(chat, title, direct=False):
         )
 
 
+_SCRIPT_LOCK = threading.Lock()
+
+
 def run_script(chat, script, extra, title):
-    say(chat, f"开始运行{title},可能需要几分钟……")
-    try:
-        r = subprocess.run([sys.executable, script] + extra,
-                           capture_output=True, text=True, timeout=3600)
-        lines = (r.stdout + r.stderr).strip().splitlines()
-        say(chat, "完成:\n" + "\n".join(lines[-12:]))
-    except Exception as e:
-        say(chat, f"运行失败:{e}")
+    # 在后台线程运行，避免长任务（最长 1 小时）阻塞机器人；同一时间只允许一个脚本，防止并发写同一份状态文件
+    if not _SCRIPT_LOCK.acquire(blocking=False):
+        say(chat, "已有任务正在运行，请等它完成后再试。")
+        return
+
+    def worker():
+        try:
+            say(chat, f"开始运行{title},可能需要几分钟……")
+            r = subprocess.run([sys.executable, script] + extra,
+                               capture_output=True, text=True, timeout=3600)
+            lines = (r.stdout + r.stderr).strip().splitlines()
+            say(chat, "完成:\n" + "\n".join(lines[-12:]))
+        except Exception as e:
+            say(chat, f"运行失败:{e}")
+        finally:
+            _SCRIPT_LOCK.release()
+
+    threading.Thread(target=worker, daemon=True).start()
 
 
 def handle(u):

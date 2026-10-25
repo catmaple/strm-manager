@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import re, time, urllib.request, urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 
 UA = "Mozilla/5.0"
 TIMEOUT = 8
@@ -7,6 +8,9 @@ SAMPLE = 2
 
 
 def _open(url):
+    # 播放地址来自第三方 CMS，只允许 http(s)，避免 file:// 等协议被利用
+    if urllib.parse.urlsplit(url).scheme.lower() not in ("http", "https"):
+        raise ValueError("unsupported URL scheme")
     return urllib.request.urlopen(
         urllib.request.Request(url, headers={"User-Agent": UA}), timeout=TIMEOUT)
 
@@ -139,11 +143,20 @@ def pick(cands, log=print):
     return best
 
 
-def rank(cands, log=print):
-    """测速并按可用余量排序所有线路，不按集数筛选。"""
+def rank(cands, log=print, workers=6):
+    """测速并按可用余量排序所有线路，不按集数筛选；线路并发测速。"""
+    cands = list(cands)
+
+    def measure(candidate):
+        return score(candidate["eps"][0][1]) if candidate.get("eps") else None
+
+    if cands:
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, len(cands)))) as pool:
+            measured = list(pool.map(measure, cands))
+    else:
+        measured = []
     ranked = []
-    for candidate in cands:
-        info = score(candidate["eps"][0][1]) if candidate.get("eps") else None
+    for candidate, info in zip(cands, measured):
         if info is None:
             candidate["_info"] = "测速失败 / 分辨率未知"
             log(f"  线路 {candidate.get('label', '?')}: 不可用/超时")

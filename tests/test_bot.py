@@ -540,6 +540,41 @@ class TelegramSearchTests(unittest.TestCase):
                 ["https://new.example/ep1.m3u8", "https://new.example/ep2.m3u8"],
             )
 
+    def test_update_item_source_maps_by_episode_number_not_position(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tv_root = Path(temporary) / "tv"
+            season_dir = tv_root / "Example Series" / "Season 01"
+            season_dir.mkdir(parents=True)
+            files = []
+            for episode in (1, 2, 4):
+                path = season_dir / f"Example Series S01E{episode:02d}.strm"
+                path.write_text("https://old.example/x.m3u8\n", encoding="utf-8")
+                files.append(str(path))
+            line = {"eps": [("第1集", "https://new.example/1.m3u8")], "series_eps": [
+                ("第1集", "https://new.example/1.m3u8"),
+                ("第2集", "https://new.example/2.m3u8"),
+                ("第3集", "https://new.example/3.m3u8"),
+                ("第4集", "https://new.example/4.m3u8"),
+            ]}
+
+            with patch.object(telegram_bot.seasons, "TV_ROOT", str(tv_root)):
+                telegram_bot.update_item_source({"kind": "tv", "files": files}, line)
+
+            self.assertEqual(
+                [Path(path).read_text(encoding="utf-8").strip() for path in files],
+                ["https://new.example/1.m3u8", "https://new.example/2.m3u8", "https://new.example/4.m3u8"],
+            )
+            self.assertEqual(len(list(season_dir.iterdir())), 3)
+
+    def test_map_episode_urls_rejects_line_missing_a_local_episode_number(self):
+        item = {"kind": "tv", "files": [
+            "C:\\tv\\S\\Season 01\\S S01E01.strm", "C:\\tv\\S\\Season 01\\S S01E03.strm",
+        ]}
+        # 条目数量够（2 个）但缺第 3 集：不能错位写入
+        eps = [("第1集", "https://n/1.m3u8"), ("第2集", "https://n/2.m3u8")]
+        with self.assertRaisesRegex(ValueError, "集数少于本地 STRM 文件数"):
+            telegram_bot.map_episode_urls(item, eps)
+
     def test_update_item_source_rejects_incomplete_tv_line(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -835,6 +870,74 @@ class TelegramSearchTests(unittest.TestCase):
         self.assertEqual(len(telegram_bot.cache[123][0]["lines"]), 6)
         self.assertIn("建议细化搜索条件", mock_say.call_args.args[1])
         self.assertIn("15", mock_say.call_args.args[1])
+
+    def test_merge_versions_uses_majority_kind_not_any_tv_vote(self):
+        def make(source, kind):
+            return {
+                "name": "Example", "full": "Example", "season": 1, "explicit": False,
+                "year": "2024", "kind": kind, "eps": [("播放", f"https://{source}/m.m3u8")],
+                "lines": [{"label": source, "eps": [("播放", f"https://{source}/m.m3u8")]}],
+            }
+
+        merged = telegram_bot.merge_versions([
+            make("a", "movie"), make("b", "movie"), make("c", "tv"),
+        ])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["kind"], "movie")
+        self.assertNotIn("_votes", merged[0])
+
+        explicit = make("d", "movie")
+        explicit["explicit"] = True
+        self.assertEqual(
+            telegram_bot.merge_versions([make("a", "movie"), explicit])[0]["kind"], "tv"
+        )
+
+    @patch.object(telegram_bot, "get_decotv_cookie", return_value="auth=session-cookie")
+    @patch.object(telegram_bot, "http_json")
+    def test_multi_version_movie_in_aggregate_search_stays_movie(self, mock_http_json, _cookie):
+        telegram_bot.cfg["decotv"].update({
+            "admin_username": "admin", "admin_password": "admin-secret",
+        })
+        mock_http_json.return_value = {"results": [{
+            "id": "m1", "source": "s1", "source_name": "Source One",
+            "title": "Example Movie", "year": "2024", "type_name": "动作",
+            "episodes": ["https://one.example/1.m3u8", "https://one.example/2.m3u8"],
+            "episodes_titles": ["国语", "粤语"],
+        }]}
+
+        results = telegram_bot.candidates("Example Movie")
+
+        self.assertEqual(results[0]["kind"], "movie")
+
+    def test_edit_ignores_series_result_for_movie_and_movie_result_for_series(self):
+        def result(kind, urls):
+            return {
+                "name": "Example", "full": "Example", "season": 1, "explicit": kind == "tv",
+                "year": "2024", "kind": kind,
+                "lines": [{"label": "S", "eps": [(str(i), u) for i, u in enumerate(urls, 1)]}],
+            }
+
+        movie = {"kind": "movie", "name": "Example", "full": "Example", "year": "2024",
+                 "season": 1, "files": ["m.strm"]}
+        series = {"kind": "tv", "name": "Example", "full": "Example", "year": "2024",
+                  "season": 1, "files": ["e1.strm"]}
+        with patch.object(telegram_bot, "probe") as mock_probe, patch.object(
+            telegram_bot, "say"
+        ) as mock_say:
+            mock_probe.rank.side_effect = lambda lines, _log: [{**l, "_info": "x"} for l in lines]
+            with patch.object(telegram_bot, "candidates", return_value=[
+                result("tv", ["https://s/1.m3u8", "https://s/2.m3u8", "https://s/3.m3u8"]),
+            ]):
+                telegram_bot.show_edit_sources(1, movie)
+            self.assertIn("没有找到", mock_say.call_args.args[1])
+            mock_probe.rank.assert_not_called()
+
+            with patch.object(telegram_bot, "candidates", return_value=[
+                result("movie", ["https://s/1.m3u8"]),
+            ]):
+                telegram_bot.show_edit_sources(1, series)
+            self.assertIn("没有找到", mock_say.call_args.args[1])
+            mock_probe.rank.assert_not_called()
 
     def test_edit_series_probes_first_episode_and_retains_full_source(self):
         item = {

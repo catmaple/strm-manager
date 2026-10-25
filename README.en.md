@@ -281,6 +281,8 @@ docker compose exec strm-manager python /opt/m3u/recheck.py --dry --force
 docker compose exec strm-manager python /opt/m3u/stats.py --no-send
 ```
 
+Like the Telegram bot, `add.py` searches through DecoTV's aggregated search (`/api/search`) and automatically picks the fastest route. Without DecoTV administrator credentials, it falls back to `cms_apis`.
+
 ## Scheduled jobs, manual runs, and logs
 
 The default schedule uses the `TZ` time zone. The scheduled crawl uses `auto.py` by default; it can be switched to `crawl.py` in the console:
@@ -290,6 +292,10 @@ The default schedule uses the `TZ` time zone. The scheduled crawl uses `auto.py`
 - Sunday at 09:00: weekly statistics
 
 The console lets you enable or disable the scheduler and individual jobs, change their run times, and choose `auto.py` (DecoTV default categories) or `crawl.py` (configured video sources) for the scheduled crawl. These are defaults and can be changed in the web form. The console also has buttons to start each task manually.
+
+Only one job runs at a time. Scheduled jobs that fall due in the same minute are queued and run one after another rather than dropped; a manual start while another job is running is skipped with a log message.
+
+TV episode numbers in generated STRM files (`S01E04`) follow the episode names reported by the source (`第4集`, `EP04`, `04`), so a source with missing episodes or extras does not shift later episodes. Trailers, featurettes, and specials (预告/花絮/特辑) are ignored. If names cannot be parsed, files are numbered by position. STRM files are written atomically, so Jellyfin never reads a half-written file.
 
 When the current playback URL is unavailable or needs optimization, `recheck.py` uses `decotv_search.py` to search all enabled non-adult DecoTV sources and probe matching candidates. If DecoTV administrator credentials are not configured, it falls back to `cms_apis`.
 

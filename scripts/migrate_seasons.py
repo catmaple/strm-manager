@@ -6,6 +6,9 @@ import seasons
 APPLY = "--apply" in sys.argv
 ROOT = seasons.TV_ROOT
 moved = 0
+if not os.path.isdir(ROOT):
+    print("剧集目录不存在，无需迁移")
+    sys.exit(0)
 for d in sorted(os.listdir(ROOT)):
     src_root = f"{ROOT}/{d}"
     if not os.path.isdir(src_root):
@@ -36,8 +39,9 @@ for d in sorted(os.listdir(ROOT)):
         for i, f in enumerate(files, 1):
             m = re.search(r"S\d+E(\d+)", f)
             ep = int(m.group(1)) if m else i
-            url = open(f"{sp}/{f}", encoding="utf-8").read()
-            open(f"{dst}/{base} S{season:02d}E{ep:02d}.strm", "w", encoding="utf-8").write(url)
+            with open(f"{sp}/{f}", encoding="utf-8") as stream_file:
+                url = stream_file.read()
+            seasons.atomic_write(f"{dst}/{base} S{season:02d}E{ep:02d}.strm", url)
             os.remove(f"{sp}/{f}")
         try:
             os.rmdir(sp)

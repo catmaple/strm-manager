@@ -674,6 +674,72 @@ class ConfigWebTests(unittest.TestCase):
             mock_run.assert_called_once()
             self.assertIn("失败", manager.RUNTIME["last_job"])
 
+    @patch.object(manager, "write_log")
+    @patch.object(
+        manager.subprocess,
+        "run",
+        return_value=manager.subprocess.CompletedProcess(["x.py"], 0, "ok"),
+    )
+    def test_busy_manual_job_is_skipped_but_scheduled_job_waits_its_turn(self, mock_run, _write_log):
+        import threading
+        import time
+
+        manager.JOB_LOCK.acquire()
+        try:
+            manager.scheduled_job("手动任务", "x.py", 10)
+            mock_run.assert_not_called()
+
+            worker = threading.Thread(
+                target=manager.scheduled_job, args=("定时任务", "x.py", 10, False, True)
+            )
+            worker.start()
+            time.sleep(0.3)
+            mock_run.assert_not_called()
+        finally:
+            manager.JOB_LOCK.release()
+        worker.join(timeout=15)
+        self.assertFalse(worker.is_alive())
+        mock_run.assert_called_once()
+
+    @patch.object(manager, "scheduled_job")
+    def test_run_due_jobs_runs_every_job_in_order_with_waiting(self, mock_job):
+        jobs = [("A", "a.py", 1, True), ("B", "b.py", 2, False)]
+        manager.run_due_jobs(jobs)
+        self.assertEqual(
+            [call.args[0] for call in mock_job.call_args_list], ["A", "B"]
+        )
+        self.assertTrue(all(call.kwargs == {"wait": True} for call in mock_job.call_args_list))
+
+    def test_scheduler_batches_jobs_due_in_the_same_minute(self):
+        from datetime import datetime as real_datetime
+
+        config = {"scheduler": {
+            "crawl": {"script": "auto", "hour": 4, "minute": 30},
+            "recheck": {"hour": 4, "minute": 30},
+        }}
+        started = []
+
+        class FakeThread:
+            def __init__(self, target=None, args=(), **_kwargs):
+                started.append((target, args))
+
+            def start(self):
+                pass
+
+        with patch.object(manager, "load_config", return_value=config), patch.object(
+            manager, "datetime"
+        ) as mock_datetime, patch.object(manager.threading, "Thread", FakeThread), patch.object(
+            manager.STOP_EVENT, "wait", side_effect=[False, False, True]
+        ):
+            mock_datetime.now.return_value = real_datetime(2026, 10, 26, 4, 30, 5)
+            manager.scheduler_loop()
+
+        # 两个任务同一分钟到点：只启动一次批处理，且连续两轮检测不会重复启动
+        self.assertEqual(len(started), 1)
+        target, args = started[0]
+        self.assertIs(target, manager.run_due_jobs)
+        self.assertEqual([job[0] for job in args[0]], ["默认分类抓取", "线路复测"])
+
 
     def test_save_preserves_blank_secrets_and_unknown_fields(self):
         self.authenticate()

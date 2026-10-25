@@ -136,15 +136,10 @@ def search(title, year, sources, cookie):
         vy = (v.get("vod_year") or "").strip()
         if year and vy.isdigit() and abs(int(vy) - int(year)) > 1:
             continue
-        groups = v.get("vod_play_url", "").split("$$$")
-        froms = v.get("vod_play_from", "").split("$$$")
-        record_lines = []
-        for i, g in enumerate(groups):
-            eps = [e.split("$", 1) for e in g.split("#") if "$" in e]
-            eps = [(n, u.strip()) for n, u in eps if ".m3u8" in u.lower()]
-            if eps:
-                ln = froms[i] if i < len(froms) else f"线路{i}"
-                record_lines.append((f"{source['name']}/{ln}", eps))
+        record_lines = [
+            (f"{source['name']}/{line_name}", eps)
+            for line_name, eps in seasons.parse_play_lines(v)
+        ]
         if not record_lines:
             continue
         item_year = vy if vy.isdigit() else year
@@ -228,7 +223,7 @@ def main():
             break
         lookups += 1
         if lookups % 20 == 0 and not DRY:
-            json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
+            seasons.atomic_write(STATE, json.dumps(state, ensure_ascii=False))
         log("查找:", title, year)
         cands = search(title, year, sources, cookie)
         hit = probe.pick(cands, log) if cands else None
@@ -246,7 +241,7 @@ def main():
         state[key] = {"s": "ok", "t": now}
         added += 1
     if not DRY:
-        json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
+        seasons.atomic_write(STATE, json.dumps(state, ensure_ascii=False))
         if added:
             refresh_jellyfin()
     log(f"完成,本次新增 {added} 部")

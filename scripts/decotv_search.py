@@ -1,5 +1,41 @@
 #!/usr/bin/env python3
+import json
+import urllib.error
 import urllib.parse
+import urllib.request
+
+
+def has_admin_credentials(config):
+    decotv = config.get("decotv", {})
+    return bool((decotv.get("admin_username") or "").strip() and decotv.get("admin_password"))
+
+
+def get_cookie(config, log=print, user_agent="Mozilla/5.0"):
+    """用 DecoTV 管理员凭证登录并返回 Cookie；未配置或登录失败时回退到 config.json 的 cookie。"""
+    if not has_admin_credentials(config):
+        return config.get("cookie", "")
+    decotv = config["decotv"]
+    request = urllib.request.Request(
+        (decotv.get("url") or "http://decotv:3000").rstrip("/") + "/api/login",
+        data=json.dumps({
+            "username": decotv["admin_username"].strip(),
+            "password": decotv["admin_password"],
+        }).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": user_agent},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            cookies = response.headers.get_all("Set-Cookie") or []
+    except (OSError, urllib.error.URLError) as error:
+        log("DecoTV 登录失败:", type(error).__name__)
+        return config.get("cookie", "")
+    cookie = "; ".join(
+        part.split(";", 1)[0].strip() for part in cookies if part.split(";", 1)[0].strip()
+    )
+    if not cookie:
+        log("DecoTV 登录成功但未返回 Cookie")
+    return cookie or config.get("cookie", "")
 
 
 def get_sources(config, cookie, http_json, log=print):

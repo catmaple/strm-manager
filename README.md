@@ -319,6 +319,8 @@ docker compose exec strm-manager python /opt/m3u/recheck.py --dry --force
 docker compose exec strm-manager python /opt/m3u/stats.py --no-send
 ```
 
+`add.py` 与 Telegram 一样使用 DecoTV 聚合搜索（`/api/search`）查找播放源，自动选取最快线路；未配置 DecoTV 管理员凭证时回退到 `cms_apis`。
+
 ## 9. 定时任务、手动运行和日志
 
 可在控制台的“定时任务”区域启用/禁用总开关和单项任务、设置运行时间，并选择批量扫描使用 `auto.py`（DecoTV 默认分类）或 `crawl.py`（已配置的视频源分类）。默认计划时间按 `.env` 中的 `TZ` 时区计算：
@@ -333,7 +335,9 @@ docker compose exec strm-manager python /opt/m3u/stats.py --no-send
 
 电影误入 TV 目录的常见原因是 CMS 分类被标记为“剧集”，或同一电影的多个播放线路被当作多集。抓取逻辑现会优先参考 CMS 条目类型和明确的季号；若分类信息缺失或含糊，仍会使用配置中的类型作为回退。建议同时检查 `crawl.sources` 的类别映射。
 
-任务互斥，定时任务和手动任务日志保存在 `data/manager/logs/`。查看容器输出和持久化日志：
+任务互斥：同一时刻只运行一个任务。多个定时任务在同一分钟到点时会排队依次执行，不会丢弃；手动启动时若已有任务在运行，则提示跳过。定时任务和手动任务日志保存在 `data/manager/logs/`。
+
+生成的剧集 STRM 文件名中的集号（如 `S01E04`）按来源提供的集名（`第4集`、`EP04`、`04`）编号，来源缺集或含番外时不会让后面的集错位；预告、花絮、特辑条目会被忽略；集名无法解析时按顺序编号。STRM 文件采用原子写入，Jellyfin 扫描时不会读到写了一半的文件。查看容器输出和持久化日志：
 
 ```bash
 docker compose logs -f strm-manager

@@ -45,16 +45,11 @@ def category_kinds(api):
 
 
 def source_urls(record):
-    urls = set()
-    for group in (record.get("vod_play_url") or "").split("$$$"):
-        for entry in group.split("#"):
-            if "$" not in entry:
-                continue
-            _, url = entry.split("$", 1)
-            url = url.strip()
-            if url:
-                urls.add(url)
-    return urls
+    return {
+        url
+        for _line, episodes in seasons.parse_play_lines(record, skip_words=())
+        for _name, url in episodes
+    }
 
 
 def find_movie_match(title, year, stream_url, sources):

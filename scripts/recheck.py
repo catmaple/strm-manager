@@ -155,7 +155,7 @@ def get_cookie():
     return _COOKIE
 
 
-def candidates(name, year, season=1):
+def candidates(name, year, season=1, kind=None):
     global _SEARCH_SOURCES
     cookie = get_cookie()
     if _SEARCH_SOURCES is None:
@@ -169,6 +169,10 @@ def candidates(name, year, season=1):
         raw = video.get("vod_name", "")
         tags = raw + (video.get("type_name") or "") + (video.get("vod_remarks") or "")
         if any(word in tags for word in SKIP_WORDS):
+            continue
+        # 以本地条目的类型为默认值，只有候选带有相反的明确证据时才排除，
+        # 防止把同名剧集的地址写进电影（或反过来）
+        if kind and seasons.infer_item_kind(kind, raw, video) != kind:
             continue
         base, source_season, _ = seasons.parse_title(raw)
         if not (
@@ -184,33 +188,42 @@ def candidates(name, year, season=1):
             and abs(int(video_year) - int(year)) > 1
         ):
             continue
-        groups = video.get("vod_play_url", "").split("$$$")
-        froms = video.get("vod_play_from", "").split("$$$")
-        for index, group in enumerate(groups):
-            if ".m3u8" not in group.lower():
-                continue
-            episodes = [entry.split("$", 1) for entry in group.split("#") if "$" in entry]
-            episodes = [
-                (episode_name, url.strip())
-                for episode_name, url in episodes
-                if ".m3u8" in url.lower()
-            ]
-            if episodes:
-                line_name = froms[index] if index < len(froms) else f"线路{index}"
-                source_name = source.get("name") or urllib.parse.urlparse(
-                    source["api"]
-                ).netloc
-                out.append({"label": route_label(source_name, line_name, source_name), "eps": episodes})
+        for line_name, episodes in seasons.parse_play_lines(video):
+            source_name = source.get("name") or urllib.parse.urlparse(
+                source["api"]
+            ).netloc
+            out.append({"label": route_label(source_name, line_name, source_name), "eps": episodes})
     return out
+
+
+def local_episode_numbers(it):
+    """本地 STRM 文件名里的集号；任一文件无法解析则返回 None。"""
+    numbers = []
+    for name in it["files"]:
+        match = re.search(r"S\d+E(\d+)", name, re.IGNORECASE)
+        if not match:
+            return None
+        numbers.append(int(match.group(1)))
+    return numbers
+
+
+def covers_local(it, eps):
+    """候选线路必须覆盖本地全部集号，否则切换后会混用不同来源或错位。"""
+    if it["kind"] == "movie":
+        return len(eps) >= 1
+    local = local_episode_numbers(it)
+    if local is None:
+        return len(eps) >= len(it["files"])
+    return set(local) <= {number for number, _ in seasons.number_episodes(eps)}
 
 
 def write_back(it, name, eps):
     if it["kind"] == "movie":
-        open(f"{it['dir']}/{it['files'][0]}", "w", encoding="utf-8").write(eps[0][1] + "\n")
+        seasons.atomic_write(f"{it['dir']}/{it['files'][0]}", eps[0][1] + "\n")
     else:
         sn = it.get("season", 1)
-        for i, (_, u) in enumerate(eps, 1):
-            open(f"{it['dir']}/{name} S{sn:02d}E{i:02d}.strm", "w", encoding="utf-8").write(u + "\n")
+        for number, url in seasons.number_episodes(eps):
+            seasons.atomic_write(f"{it['dir']}/{name} S{sn:02d}E{number:02d}.strm", url + "\n")
 
 
 def due(it, now):
@@ -276,12 +289,11 @@ def main():
             continue
 
         try:
-            cands = candidates(name, year, it.get("season", 1))
+            cands = candidates(name, year, it.get("season", 1), it["kind"])
         except ValueError as error:
             log("无法读取 DecoTV 搜索来源:", error)
             cands = []
-        need = len(it["files"])
-        pool = [c for c in cands if len(c["eps"]) >= need and c["eps"][0][1] != cur_url]
+        pool = [c for c in cands if covers_local(it, c["eps"]) and c["eps"][0][1] != cur_url]
         if pool:
             nmax = max(len(c["eps"]) for c in pool)
             pool = [c for c in pool if len(c["eps"]) == nmax]
@@ -322,7 +334,7 @@ def main():
                 ok_n += 1
 
     if not DRY:
-        json.dump(health, open(HEALTH, "w", encoding="utf-8"), ensure_ascii=False)
+        seasons.atomic_write(HEALTH, json.dumps(health, ensure_ascii=False))
         if fixed:
             refresh_jellyfin()
 

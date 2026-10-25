@@ -944,10 +944,16 @@ def write_log(name, message):
         log_file.write(line)
 
 
-def scheduled_job(name, script, timeout, reclassify_after=False):
+def scheduled_job(name, script, timeout, reclassify_after=False, wait=False):
     if not JOB_LOCK.acquire(blocking=False):
-        write_log("scheduler", f"{name} 跳过：另一个定时任务仍在运行")
-        return
+        if not wait:
+            write_log("scheduler", f"{name} 跳过：另一个定时任务仍在运行")
+            return
+        # 定时任务同一时刻到点时排队依次执行，而不是被丢弃
+        write_log("scheduler", f"{name} 到点，等待其他任务完成后运行")
+        while not JOB_LOCK.acquire(timeout=5):
+            if STOP_EVENT.is_set():
+                return
     with STATE_LOCK:
         RUNTIME["job"] = name
         RUNTIME["last_job"] = f"{name} 开始于 {datetime.now():%Y-%m-%d %H:%M:%S}"
@@ -1028,6 +1034,14 @@ def run_manual_job(job_name):
     return f"已启动任务：{name}"
 
 
+def run_due_jobs(due_jobs):
+    """按顺序依次运行同一时刻到点的定时任务。"""
+    for job in due_jobs:
+        if STOP_EVENT.is_set():
+            return
+        scheduled_job(*job, wait=True)
+
+
 def scheduler_loop():
     started = {}
     while not STOP_EVENT.wait(10):
@@ -1040,12 +1054,15 @@ def scheduler_loop():
         if not enabled:
             continue
         now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        started = {key: True for key in started if key.startswith(today)}
         jobs = {
             "auto": ("默认分类抓取", "auto.py", 3 * 60 * 60),
             "crawl": ("指定源抓取", "crawl.py", 3 * 60 * 60),
             "recheck": ("线路复测", "recheck.py", 2 * 60 * 60),
             "stats": ("周统计", "stats.py", 2 * 60 * 60),
         }
+        due_jobs = []
         for job_name, job in jobs.items():
             if job_name == "auto" or job_name == "crawl":
                 settings = (scheduler_cfg.get("crawl") or {})
@@ -1075,16 +1092,15 @@ def scheduler_loop():
                 if job_name == "stats" and weekday is not None and now.weekday() != weekday:
                     continue
             if now.hour == hour and now.minute == minute:
-                key = now.strftime("%Y-%m-%d") + f"-{job_name}"
+                key = f"{today}-{job_name}"
                 if key in started:
                     continue
                 started[key] = True
-                threading.Thread(
-                    target=scheduled_job,
-                    args=(*job, job_name in {"auto", "crawl"}),
-                    daemon=True,
-                ).start()
-                break
+                due_jobs.append((*job, job_name in {"auto", "crawl"}))
+        if due_jobs:
+            threading.Thread(
+                target=run_due_jobs, args=(due_jobs,), name="scheduled-jobs", daemon=True
+            ).start()
 
 
 def stop_bot():

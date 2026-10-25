@@ -69,6 +69,68 @@ class MediaClassificationTests(unittest.TestCase):
             "tv",
         )
 
+    def test_movie_sequel_part_number_is_not_treated_as_tv(self):
+        for title in ("功夫熊猫 第2部", "疯狂动物城 第二部"):
+            self.assertEqual(
+                seasons.infer_item_kind("movie", title, {"type_name": "动画片"}),
+                "movie",
+            )
+        self.assertEqual(
+            seasons.infer_item_kind("movie", "示例剧集 第2部", {"type_name": "国产剧"}),
+            "tv",
+        )
+
+    def test_animated_and_tv_movie_categories_are_movies(self):
+        for category in ("动漫电影", "动画电影", "电视电影", "剧场版", "喜剧片", "剧情片"):
+            self.assertEqual(
+                seasons.infer_item_kind("tv", "示例", {"type_name": category}),
+                "movie",
+                category,
+            )
+
+    def test_regional_drama_categories_are_tv_even_with_one_episode(self):
+        for category in ("韩剧", "国产剧", "欧美剧", "港台剧", "日剧", "泰剧", "海外剧"):
+            self.assertEqual(
+                seasons.infer_item_kind(
+                    "movie", "示例", {
+                        "type_name": category,
+                        "vod_play_url": "HD$https://media.example/1.m3u8",
+                    },
+                ),
+                "tv",
+                category,
+            )
+
+    def test_bare_genre_and_documentary_categories_keep_configured_kind(self):
+        for category in ("喜剧", "纪录片"):
+            self.assertEqual(
+                seasons.infer_item_kind("movie", "示例", {"type_name": category}),
+                "movie",
+                category,
+            )
+
+    def test_theatrical_title_under_anime_category_is_movie(self):
+        self.assertEqual(
+            seasons.infer_item_kind("tv", "名侦探柯南 剧场版", {"type_name": "动漫"}),
+            "movie",
+        )
+        self.assertEqual(
+            seasons.infer_item_kind("tv", "示例番剧", {"type_name": "动漫"}),
+            "tv",
+        )
+
+    def test_numbered_episode_names_are_tv_but_version_names_are_not(self):
+        numbered = {"vod_play_url": "01$https://a/1.m3u8#02$https://a/2.m3u8"}
+        versions = {"vod_play_url": "国语$https://a/1.m3u8#粤语$https://a/2.m3u8"}
+        self.assertEqual(seasons.infer_item_kind("movie", "示例", numbered), "tv")
+        self.assertEqual(seasons.infer_item_kind("movie", "示例", versions), "movie")
+        self.assertEqual(
+            seasons.infer_item_kind(
+                "movie", "示例", {"vod_play_url": "1$https://a/1.m3u8"}
+            ),
+            "movie",
+        )
+
     @patch.object(reclassify_media, "category_kinds", return_value={"1": "movie"})
     @patch.object(
         reclassify_media,
