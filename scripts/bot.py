@@ -357,6 +357,33 @@ PROBE_MAX_LINES = 3
 PROBE_DEADLINE = 40
 
 
+def merge_versions(cands):
+    """同一部（片名+季+年份）在多个视频源中的结果合并为一个版本，线路合并。"""
+    merged = {}
+    order = []
+    for candidate in cands:
+        key = (
+            seasons.clean(candidate.get("name", "")).casefold(),
+            candidate.get("season"),
+            candidate.get("year", ""),
+        )
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = candidate
+            order.append(key)
+            continue
+        known = {line.get("label") for line in existing.get("lines", [])}
+        for line in candidate.get("lines", []):
+            if line.get("label") not in known:
+                existing.setdefault("lines", []).append(line)
+                known.add(line.get("label"))
+        if candidate.get("kind") == "tv":
+            existing["kind"] = "tv"
+        if candidate.get("lines") and len(candidate.get("eps", [])) > len(existing.get("eps", [])):
+            existing["eps"] = candidate["eps"]
+    return [merged[key] for key in order]
+
+
 def annotate_search_results(cands):
     """测速并剔除全部线路都失败的结果，其余按可用线路排序；总耗时有上限。"""
     def probe_candidate(candidate):
@@ -378,7 +405,8 @@ def annotate_search_results(cands):
         ranked = future.result() if future.done() and not future.cancelled() else None
         if not ranked:
             continue
-        candidate["lines"] = ranked
+        untested = (candidate.get("lines") or [])[PROBE_MAX_LINES:]
+        candidate["lines"] = ranked + untested
         candidate["_probe"] = _short_probe_info(ranked[0].get("_info"))
         usable.append(candidate)
     cands[:] = usable
@@ -804,13 +832,16 @@ def search_and_reply(chat, title, direct=False):
     if not cands:
         say(chat, "没找到可用的 m3u8 资源,换个关键词或换个源试试。")
         return
+    cands = merge_versions(cands)
     tb, ts, _, _ = parse_search_title(title)
     exact = [c for c in cands if c["name"] == tb and c["season"] == ts]
     if direct and len(exact) == 1:
         show_add_sources(chat, exact[0])
         return
-    # 结果过多时优先保留标题完全匹配的，避免测速耗时过长和按钮超限
-    cands = (exact + [c for c in cands if c not in exact])[:PROBE_MAX_CANDIDATES]
+    # 标题完全匹配的版本优先；版本过多时只测速前 N 个并提示细化搜索
+    cands = exact + [c for c in cands if c not in exact]
+    total_versions = len(cands)
+    cands = cands[:PROBE_MAX_CANDIDATES]
     cache[chat] = cands
     say(chat, f"正在测速 {len(cands)} 个搜索结果，请稍候……")
     try:
@@ -825,6 +856,12 @@ def search_and_reply(chat, title, direct=False):
     buttons = [[{"text": search_result_button_label(c), "callback_data": f"add:{i}"}]
                for i, c in enumerate(cands)]
     say(chat, "请选择要加入的版本:", buttons)
+    if total_versions > PROBE_MAX_CANDIDATES:
+        say(
+            chat,
+            f"共找到 {total_versions} 个不同版本，结果太多，仅显示前 {PROBE_MAX_CANDIDATES} 个。"
+            "建议细化搜索条件，例如输入完整片名或副标题（如“蜘蛛侠：英雄归来”）。",
+        )
 
 
 def run_script(chat, script, extra, title):

@@ -740,7 +740,7 @@ class TelegramSearchTests(unittest.TestCase):
         mock_show.assert_called_once_with(123, candidate)
         mock_do_add.assert_not_called()
 
-    def test_same_title_from_different_sources_has_distinct_search_buttons(self):
+    def test_same_movie_from_different_sources_is_one_version_with_both_routes(self):
         candidates = [
             {
                 "name": "Example Movie",
@@ -770,16 +770,18 @@ class TelegramSearchTests(unittest.TestCase):
             telegram_bot.probe,
             "rank",
             side_effect=lambda lines, _log: [
-                {**lines[0], "_info": "1920x1080 / 9.0Mbps/需2.0, 0.30s"}
+                {**line, "_info": "1920x1080 / 9.0Mbps/需2.0, 0.30s"} for line in lines
             ],
         ):
             telegram_bot.search_and_reply(123, "Example Movie")
 
         buttons = mock_say.call_args.args[2]
-        self.assertIn("Source One", buttons[0][0]["text"])
-        self.assertIn("Source Two", buttons[1][0]["text"])
+        self.assertEqual(len(buttons), 1)
         self.assertIn("1920x1080 · 0.30s", buttons[0][0]["text"])
-        self.assertNotEqual(buttons[0][0]["text"], buttons[1][0]["text"])
+        self.assertEqual(
+            [line["label"] for line in telegram_bot.cache[123][0]["lines"]],
+            ["Source One", "Source Two"],
+        )
 
     def test_search_results_drop_candidates_whose_routes_all_fail_probe(self):
         def make(name, url):
@@ -807,6 +809,32 @@ class TelegramSearchTests(unittest.TestCase):
         self.assertEqual(len(buttons), 1)
         self.assertIn("Live", buttons[0][0]["text"])
         self.assertNotIn("测速失败", buttons[0][0]["text"])
+
+    def test_search_merges_same_movie_across_sources_and_warns_when_too_many(self):
+        def make(name, year, source):
+            url = f"https://{source}.example/{name}{year}.m3u8"
+            return {
+                "name": name, "full": name, "season": 1, "explicit": False,
+                "year": year, "kind": "movie", "eps": [("播放", url)],
+                "lines": [{"label": source, "eps": [("播放", url)]}],
+            }
+
+        candidates = [make("Spider", "2002", f"s{i}") for i in range(6)]
+        candidates += [make(f"Spider {n}", "2010", "x") for n in range(14)]
+
+        with patch.object(telegram_bot, "candidates", return_value=candidates), patch.object(
+            telegram_bot, "say"
+        ) as mock_say, patch.object(
+            telegram_bot.probe, "rank",
+            side_effect=lambda lines, _log: [{**l, "_info": "1080p / 9.0Mbps/需2.0, 0.30s"} for l in lines],
+        ):
+            telegram_bot.search_and_reply(123, "Spider")
+
+        buttons = [call.args[2] for call in mock_say.call_args_list if len(call.args) > 2][-1]
+        self.assertEqual(len(buttons), telegram_bot.PROBE_MAX_CANDIDATES)
+        self.assertEqual(len(telegram_bot.cache[123][0]["lines"]), 6)
+        self.assertIn("建议细化搜索条件", mock_say.call_args.args[1])
+        self.assertIn("15", mock_say.call_args.args[1])
 
     def test_edit_series_probes_first_episode_and_retains_full_source(self):
         item = {
