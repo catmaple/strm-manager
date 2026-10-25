@@ -183,6 +183,21 @@ def refresh_jellyfin():
         log("通知 Jellyfin 失败:", e)
 
 
+def notify(text):
+    tgc = cfg.get("telegram")
+    if not tgc or not tgc.get("token"):
+        return
+    for chat in tgc.get("allowed_chat_ids", []):
+        try:
+            req = urllib.request.Request(
+                f"https://api.telegram.org/bot{tgc['token']}/sendMessage",
+                data=json.dumps({"chat_id": chat, "text": text[:4000]}).encode(),
+                headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=20)
+        except Exception as e:
+            log("Telegram 通知失败:", type(e).__name__)
+
+
 def main():
     titles = get_titles()
     log(f"共发现 {len(titles)} 部不重复的片")
@@ -244,6 +259,7 @@ def main():
         seasons.atomic_write(STATE, json.dumps(state, ensure_ascii=False))
         if added:
             refresh_jellyfin()
+            notify(f"默认分类抓取完成:新增 {added} 部")
     log(f"完成,本次新增 {added} 部")
 
 

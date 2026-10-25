@@ -259,7 +259,7 @@ Start with a small Dry Run:
 docker compose exec strm-manager python /opt/m3u/crawl.py --dry --new 5 --pages 5
 ```
 
-Review the preview and confirm movie/TV classification. The Dry Run button in the web console simulates at most 3 titles within about 90 seconds (180-second overall timeout) and shows the output so far if it times out. The DecoTV aggregate-search time for each title is logged ("聚合搜索耗时"), which helps tell whether DecoTV search is slow. Then run a small real crawl using a category ID returned by `--types`:
+Review the preview and confirm movie/TV classification. The Dry Run button in the web console runs in the background and does not block the page. It simulates in batches up to the configured limits, never modifies `config.json` or saves crawl state, queues behind any running job, and writes its result to the task log and sends it through the Telegram bot (3-hour maximum). The DecoTV aggregate-search time for each title is logged ("聚合搜索耗时"), which helps tell whether DecoTV search is slow. Scheduled jobs likewise run queued in the background and need no immediate result; `auto.py`, `crawl.py`, `recheck.py` and `stats.py` all notify through the Telegram bot when they finish (`auto.py` and `crawl.py` only when something was added). Then run a small real crawl using a category ID returned by `--types`:
 
 ```bash
 docker compose exec strm-manager python /opt/m3u/crawl.py --new 5 --pages 5 --type 6

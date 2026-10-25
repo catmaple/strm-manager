@@ -32,12 +32,39 @@ class ScheduleDefaultsTests(unittest.TestCase):
         self.assertEqual(json.dumps(config, sort_keys=True), snapshot)
 
 
-class DryRunTimeoutTests(unittest.TestCase):
-    def test_timeout_returns_partial_output_and_restores_config(self):
+class DryRunBackgroundTests(unittest.TestCase):
+    def run_job(self, fake_process, config):
+        handle, path = tempfile.mkstemp(suffix=".json")
+        os.close(handle)
+        with patch.object(manager.subprocess, "Popen", return_value=fake_process) as popen, \
+                patch.object(manager, "notify_telegram") as notify, \
+                patch.object(manager, "write_log") as write_log:
+            manager.dry_run_job(config, path)
+        self.assertFalse(os.path.exists(path))
+        self.assertFalse(manager.JOB_LOCK.locked())
+        return popen, notify, write_log
+
+    def test_success_notifies_telegram_and_uses_private_config(self):
+        class FakeProcess:
+            returncode = 0
+
+            def communicate(self, timeout=None):
+                return "line one\nline two\n", None
+
+        config = {"telegram": {"token": "123:secret-token", "allowed_chat_ids": [1]}}
+        popen, notify, _ = self.run_job(FakeProcess(), config)
+        env = popen.call_args.kwargs["env"]
+        self.assertIn("STRM_CONFIG_PATH", env)
+        self.assertNotEqual(env["STRM_CONFIG_PATH"], "/opt/m3u/config.json")
+        text = notify.call_args.args[1]
+        self.assertIn("完成", text)
+        self.assertIn("line two", text)
+
+    def test_timeout_kills_process_and_reports_partial_output(self):
         import subprocess
 
         class FakeProcess:
-            returncode = None
+            returncode = -9
             calls = 0
             killed = False
 
@@ -45,23 +72,23 @@ class DryRunTimeoutTests(unittest.TestCase):
                 FakeProcess.calls += 1
                 if FakeProcess.calls == 1:
                     raise subprocess.TimeoutExpired("crawl", timeout)
-                return "line one\nline two\n", None
+                return "partial output\n", None
 
             def kill(self):
                 FakeProcess.killed = True
 
-        with tempfile.TemporaryDirectory() as folder:
-            target = Path(folder) / "config.json"
-            target.write_text('{"original": true}', encoding="utf-8")
-            real_path = manager.Path
-            with patch.object(
-                manager, "Path", side_effect=lambda value: target if value == "/opt/m3u/config.json" else real_path(value)
-            ), patch.object(manager.subprocess, "Popen", return_value=FakeProcess()):
-                message = manager.run_dry_run({"changed": True})
-            self.assertIn("超时", message)
-            self.assertIn("line two", message)
-            self.assertTrue(FakeProcess.killed)
-            self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"original": True})
+        _, notify, _ = self.run_job(FakeProcess(), {})
+        self.assertTrue(FakeProcess.killed)
+        text = notify.call_args.args[1]
+        self.assertIn("超时", text)
+        self.assertIn("partial output", text)
+
+    def test_run_dry_run_returns_immediately(self):
+        with patch.object(manager.threading, "Thread") as thread:
+            message = manager.run_dry_run({"telegram": {"token": "t"}})
+        self.assertTrue(thread.return_value.start.called)
+        self.assertIn("后台", message)
+        os.unlink(thread.call_args.kwargs["args"][1])
 
 
 class ConfigWebTests(unittest.TestCase):
