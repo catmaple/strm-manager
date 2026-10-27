@@ -667,6 +667,7 @@ class ConfigWebTests(unittest.TestCase):
     def test_scheduler_form_parses_schedule_settings(self):
         parsed = manager.config_from_form({
             "scheduler_enabled": "on",
+            "scheduler_notifications_enabled": "on",
             "scheduler_crawl_enabled": "on",
             "scheduler_crawl_script": "crawl",
             "scheduler_crawl_hour": "02",
@@ -680,6 +681,7 @@ class ConfigWebTests(unittest.TestCase):
             "scheduler_stats_minute": "00",
         })
         self.assertTrue(parsed["scheduler"]["enabled"])
+        self.assertTrue(parsed["scheduler"]["notifications_enabled"])
         self.assertEqual(parsed["scheduler"]["crawl"]["script"], "crawl")
         self.assertEqual(parsed["scheduler"]["crawl"]["hour"], 2)
         self.assertEqual(parsed["scheduler"]["crawl"]["minute"], 15)
@@ -774,7 +776,28 @@ class ConfigWebTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_job.call_args_list], ["A", "B"]
         )
-        self.assertTrue(all(call.kwargs == {"wait": True} for call in mock_job.call_args_list))
+        self.assertTrue(all(
+            call.kwargs == {
+                "wait": True,
+                "scheduled": True,
+                "notifications_enabled": False,
+            }
+            for call in mock_job.call_args_list
+        ))
+
+    @patch.object(manager, "write_log")
+    @patch.object(
+        manager.subprocess,
+        "run",
+        return_value=manager.subprocess.CompletedProcess(["x.py"], 0, "ok"),
+    )
+    def test_scheduled_job_sets_notification_environment(self, mock_run, _write_log):
+        manager.scheduled_job(
+            "定时任务", "x.py", 10, scheduled=True, notifications_enabled=True
+        )
+        self.assertEqual(
+            mock_run.call_args.kwargs["env"]["STRM_SCHEDULED_NOTIFICATIONS"], "1"
+        )
 
     def test_scheduler_batches_jobs_due_in_the_same_minute(self):
         from datetime import datetime as real_datetime

@@ -24,6 +24,9 @@
     "token": "",
     "allowed_chat_ids": []
   },
+  "scheduler": {
+    "notifications_enabled": false
+  },
   "recheck": {
     "min_headroom": 1.5,
     "switch_gain": 1.3,

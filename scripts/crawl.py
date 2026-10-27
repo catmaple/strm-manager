@@ -352,6 +352,8 @@ def refresh_jellyfin():
 
 
 def notify(text):
+    if os.environ.get("STRM_SCHEDULED_NOTIFICATIONS") == "0":
+        return
     tgc = cfg.get("telegram")
     if not tgc or not tgc.get("token"):
         return

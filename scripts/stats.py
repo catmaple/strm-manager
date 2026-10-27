@@ -151,7 +151,8 @@ def main():
     print(text)
     if NO_SEND:
         return
-    send(text)
+    if os.environ.get("STRM_SCHEDULED_NOTIFICATIONS") != "0":
+        send(text)
     json.dump({"t": time.time(), "movies": movies, "tv": tv},
               open(SNAP, "w", encoding="utf-8"), ensure_ascii=False)
 

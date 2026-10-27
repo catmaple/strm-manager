@@ -211,6 +211,10 @@ def validate_config(config):
         scheduler = config["scheduler"]
         if "enabled" in scheduler and not isinstance(scheduler["enabled"], bool):
             raise ValueError("scheduler.enabled 必须是 true 或 false")
+        if "notifications_enabled" in scheduler and not isinstance(
+            scheduler["notifications_enabled"], bool
+        ):
+            raise ValueError("scheduler.notifications_enabled 必须是 true 或 false")
         for job_name in ("crawl", "recheck", "stats"):
             job = scheduler.get(job_name)
             if job is None:
@@ -641,6 +645,7 @@ def config_from_form(form):
         },
         "scheduler": {
             "enabled": form.get("scheduler_enabled") == "on",
+            "notifications_enabled": form.get("scheduler_notifications_enabled") == "on",
             "crawl": {
                 "enabled": form.get("scheduler_crawl_enabled") == "on",
                 "script": form.get("scheduler_crawl_script", "auto") or "auto",
@@ -992,7 +997,10 @@ def write_log(name, message):
         log_file.write(line)
 
 
-def scheduled_job(name, script, timeout, reclassify_after=False, wait=False):
+def scheduled_job(
+    name, script, timeout, reclassify_after=False, wait=False,
+    scheduled=False, notifications_enabled=False,
+):
     if not JOB_LOCK.acquire(blocking=False):
         if not wait:
             write_log("scheduler", f"{name} 跳过：另一个定时任务仍在运行")
@@ -1007,6 +1015,11 @@ def scheduled_job(name, script, timeout, reclassify_after=False, wait=False):
         RUNTIME["last_job"] = f"{name} 开始于 {datetime.now():%Y-%m-%d %H:%M:%S}"
     write_log("scheduler", f"开始运行 {name}")
     try:
+        env = os.environ.copy()
+        if scheduled:
+            env["STRM_SCHEDULED_NOTIFICATIONS"] = (
+                "1" if notifications_enabled else "0"
+            )
         result = subprocess.run(
             [sys.executable, f"/opt/m3u/{script}"],
             cwd="/opt/m3u",
@@ -1015,6 +1028,7 @@ def scheduled_job(name, script, timeout, reclassify_after=False, wait=False):
             text=True,
             timeout=timeout,
             check=False,
+            env=env,
         )
         output = result.stdout or ""
         for line in output.splitlines():
@@ -1087,7 +1101,18 @@ def run_due_jobs(due_jobs):
     for job in due_jobs:
         if STOP_EVENT.is_set():
             return
-        scheduled_job(*job, wait=True)
+        name, script, timeout, reclassify_after, *notification_setting = job
+        scheduled_job(
+            name,
+            script,
+            timeout,
+            reclassify_after,
+            wait=True,
+            scheduled=True,
+            notifications_enabled=(
+                notification_setting[0] if notification_setting else False
+            ),
+        )
 
 
 def scheduler_loop():
@@ -1144,7 +1169,11 @@ def scheduler_loop():
                 if key in started:
                     continue
                 started[key] = True
-                due_jobs.append((*job, job_name in {"auto", "crawl"}))
+                due_jobs.append((
+                    *job,
+                    job_name in {"auto", "crawl"},
+                    scheduler_cfg.get("notifications_enabled", False),
+                ))
         if due_jobs:
             threading.Thread(
                 target=run_due_jobs, args=(due_jobs,), name="scheduled-jobs", daemon=True

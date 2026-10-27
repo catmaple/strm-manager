@@ -159,6 +159,12 @@
               启用定时任务总开关
             </label>
           </div>
+          <div class="field checkbox-row field-wide">
+            <label for="scheduler_notifications_enabled">
+              <input id="scheduler_notifications_enabled" name="scheduler_notifications_enabled" type="checkbox" {% if config.get('scheduler', {}).get('notifications_enabled', False) %}checked{% endif %}>
+              发送定时任务 Telegram 通知
+            </label>
+          </div>
           <div class="field checkbox-row">
             <label for="scheduler_crawl_enabled">
               <input id="scheduler_crawl_enabled" name="scheduler_crawl_enabled" type="checkbox" {% if config.get('scheduler', {}).get('crawl', {}).get('enabled', True) %}checked{% endif %}>

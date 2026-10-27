@@ -288,7 +288,7 @@ docker compose exec strm-manager python /opt/m3u/crawl.py --types
 
 `auto.py` 从 `list_urls` 获取待处理片名，没有播放链接，因此对每个片名读取 DecoTV 中所有已启用的非成人视频源并通过 DecoTV 聚合搜索，最多 4 个片名并发查找，并选取最快线路。`crawl.py` 使用 `crawl.sources` 获取分类和视频 metadata，源返回的记录已包含播放链接，直接使用该记录的线路（仍会测速剔除失效线路），不再逐条搜索；只有该记录没有可用线路时才回退到 DecoTV 聚合搜索。之后的 `recheck.py` 会在线路失效或需要优化时跨所有源换线。请配置有效的 DecoTV 管理员凭证；凭证缺失时聚合搜索会回退到 `cms_apis`。
 
-网页上的 Dry Run 运行 `crawl.py --dry`，同步执行并直接在页面显示结果（最长 300 秒，超时会终止并显示超时前的输出）；它使用配置的临时副本，不改动 `config.json`，也不保存抓取状态。定时任务在后台排队运行，不要求立即出结果；`auto.py`、`crawl.py`、`recheck.py` 和 `stats.py` 完成后都会通过 Telegram 机器人通知（`auto.py`、`crawl.py` 仅在有新增时通知）。
+网页上的 Dry Run 运行 `crawl.py --dry`，同步执行并直接在页面显示结果（最长 300 秒，超时会终止并显示超时前的输出）；它使用配置的临时副本，不改动 `config.json`，也不保存抓取状态。定时任务在后台排队运行，不要求立即出结果；可在“定时任务”区域选择是否发送定时任务 Telegram 通知。未勾选时定时任务不发送通知，手动启动任务的通知行为不受影响。
 
 重点：容器内脚本仍然使用 `/media/movies` 和 `/media/tv`，但它们分别映射到宿主机的 `/media/movies` 和 `/media/shows`。因此最终生成的 STRM 永远在宿主机 `/media/movies` 和 `/media/shows`，而不是项目目录 `data/media/`；Jellyfin 媒体库仍填写容器内路径 `/media/movies` 和 `/media/tv`。
 

@@ -292,7 +292,7 @@ The default schedule uses the `TZ` time zone. The scheduled crawl uses `auto.py`
 
 To avoid every user hitting the video sources at the same moment, these times are generated randomly on first start and saved to `config.json`; they then stay fixed, and configs that already store explicit times are not changed. They can be changed in the web form.
 
-The console lets you enable or disable the scheduler and individual jobs, change their run times, and choose `auto.py` (DecoTV default categories) or `crawl.py` (configured video sources) for the scheduled crawl. The console also has buttons to start each task manually.
+The console lets you enable or disable the scheduler and individual jobs, change their run times, choose `auto.py` (DecoTV default categories) or `crawl.py` (configured video sources) for the scheduled crawl, and choose whether scheduled jobs send Telegram notifications. This setting does not affect notifications for manually started jobs. The console also has buttons to start each task manually.
 
 Only one job runs at a time. Scheduled jobs that fall due in the same minute are queued and run one after another rather than dropped; a manual start while another job is running is skipped with a log message.
 
