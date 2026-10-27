@@ -312,7 +312,7 @@ docker compose exec strm-manager python /opt/m3u/crawl.py --new 5 --pages 5 --ty
 find /media/movies /media/shows -name '*.strm' -type f | head
 ```
 
-然后在 Jellyfin 管理页扫描媒体库，确认条目出现，并分别用 Jellyfin 网页端和目标客户端（VidHub、Infuse、SenPlayer）实际测试播放。必要时可执行：
+然后在 Jellyfin 管理页扫描媒体库，确认条目出现，并分别用 Jellyfin 网页端和目标客户端（如VidHub、Infuse、SenPlayer及其它支持STRM的客户端）实际测试播放。必要时可执行：
 
 ```bash
 docker compose exec strm-manager python /opt/m3u/add.py "片名"

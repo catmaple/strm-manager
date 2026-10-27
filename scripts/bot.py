@@ -811,7 +811,7 @@ def do_add(chat, c, line):
         "explicit": c["explicit"], "year": c["year"], "kind": c["kind"],
         "eps": line["eps"]})
     ok = refresh_jellyfin()
-    tail = "已通知 Jellyfin 扫描,稍等一两分钟在 VidHub 里刷新。" if ok \
+    tail = "已通知 Jellyfin 扫描, 一两分钟后可观看。" if ok \
         else "未配置 Jellyfin api_key,请等它定时扫描或手动扫描。"
     say(chat, f"✅ 已加入:{label(c)}\n线路:{line.get('label')}({line.get('_info', '')})\n目录:{folder}\n{tail}")
 
