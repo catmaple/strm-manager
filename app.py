@@ -63,6 +63,19 @@ CRAWL_SKIP_REMARK_OPTIONS = [
     ("抢先", "抢先"),
     ("预告", "预告"),
 ]
+CONFIG_SECTIONS = {
+    "connection": "连接与视频源",
+    "crawl": "抓取与复测",
+    "scheduler": "定时任务",
+    "telegram": "Telegram",
+    "advanced": "高级过滤",
+}
+SECTION_KEYS = {
+    "connection": {"decotv", "jellyfin", "cms_apis", "list_urls"},
+    "crawl": {"max_new_per_run", "max_pages", "max_lookups_per_run", "retry_miss_days", "recheck"},
+    "scheduler": {"scheduler"},
+    "telegram": {"telegram"},
+}
 NUMBER_FIELDS = {
     "max_new_per_run": (0, 100000),
     "max_pages": (0, 100000),
@@ -894,10 +907,24 @@ def generate_sources_api():
     }
 
 
+def select_section(submitted, form, section):
+    """Keep only the settings owned by the submitted tab so other tabs stay untouched."""
+    if section == "advanced":
+        crawl = submitted.get("crawl") or {}
+        return {"crawl": {key: value for key, value in crawl.items() if key != "sources"}}
+    selected = {key: value for key, value in submitted.items() if key in SECTION_KEYS[section]}
+    if section == "connection" and "crawl_sources" in form:
+        selected["crawl"] = {"sources": (submitted.get("crawl") or {}).get("sources", [])}
+    return selected
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
         action = request.form.get("action", "save")
+        section = request.form.get("section", "")
+        if section not in CONFIG_SECTIONS:
+            section = ""
         try:
             current = load_config()
             raw_config = request.form.get("config_json")
@@ -905,6 +932,8 @@ def index():
                 submitted = json.loads(raw_config)
             else:
                 submitted = config_from_form(request.form)
+                if section:
+                    submitted = select_section(submitted, request.form, section)
             merged = merge_config(current, submitted)
             merged.pop("login", None)
             if isinstance(merged.get("crawl"), dict):
@@ -952,14 +981,23 @@ def index():
                             "视频源已切换，但无法读取新源分类；配置未保存，请检查视频源地址后重试。"
                         )
                 save_config(updated)
-                session["last_action_result"] = "配置已校验并保存。定时任务和脚本下次运行时会读取新配置；Telegram 机器人会自动重启。"
-                flash("配置已校验并保存。定时任务和脚本下次运行时会读取新配置；Telegram 机器人会自动重启。", "success")
+                if section:
+                    note = (
+                        "Telegram 机器人将自动重新加载。"
+                        if section in {"connection", "telegram"}
+                        else "定时任务和脚本下次运行时会读取新配置。"
+                    )
+                    message = f"已保存：{CONFIG_SECTIONS[section]}。{note}"
+                else:
+                    message = "配置已校验并保存。定时任务和脚本下次运行时会读取新配置；Telegram 机器人会自动重启。"
+                session["last_action_result"] = message
+                flash(message, "success")
         except (json.JSONDecodeError, ValueError) as error:
             flash(f"配置未保存：{error}", "error")
         except OSError as error:
             app.logger.exception("Unable to save config")
             flash(f"配置保存失败：{error}", "error")
-        return redirect(url_for("index"))
+        return redirect(url_for("index") + (f"#tab-{section}" if section else ""))
 
     config_error = None
     try:

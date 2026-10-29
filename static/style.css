@@ -68,6 +68,20 @@ h1, h2, p { margin-top: 0; }
 .muted { color: #667085; font-size: 14px; }
 .runtime + .muted { margin: 14px 0 0; }
 .section-heading { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid #dce3eb; }
+.tab-button {
+  position: relative;
+  margin-bottom: -1px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: 7px 7px 0 0;
+  color: #44546a;
+  background: transparent;
+}
+.tab-button:hover { color: #17212b; background: #edf2f6; }
+.tab-button[aria-selected="true"] { border-color: #dce3eb #dce3eb #fff; color: #17212b; background: #fff; font-weight: 600; }
+.dirty-dot { margin-left: 6px; color: #d97706; font-size: 10px; vertical-align: middle; }
+.tab-panel[hidden] { display: none; }
 .section-heading p { margin-bottom: 14px; }
 .form-grid {
   display: grid;

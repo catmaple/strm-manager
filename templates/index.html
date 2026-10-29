@@ -64,18 +64,18 @@
         <pre>{{ last_action_result }}</pre>
       </div>
       {% endif %}
-      <form method="post" action="{{ url_for('index') }}">
+      <div class="tabs" role="tablist" aria-label="配置分组">
+        {% for tab_id, tab_label in [('connection', '连接与视频源'), ('crawl', '抓取与复测'), ('scheduler', '定时任务'), ('telegram', 'Telegram'), ('advanced', '高级过滤')] %}
+        <button type="button" class="tab-button" role="tab" id="tab-button-{{ tab_id }}" data-tab="{{ tab_id }}" aria-controls="tab-{{ tab_id }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ tab_label }}<span class="dirty-dot" hidden title="有未保存的修改">●</span></button>
+        {% endfor %}
+      </div>
+
+      <form class="tab-panel" id="tab-connection" role="tabpanel" aria-labelledby="tab-button-connection" data-section="connection" method="post" action="{{ url_for('index') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="connection">
 
         <h3>基础配置</h3>
         <div class="form-grid">
-          {% if config.get('unknown_option') is not none %}
-          <div class="field field-wide">
-            <label>保留字段（未识别配置）</label>
-            <div class="muted">unknown_option</div>
-            <textarea rows="4" readonly>{{ config.get('unknown_option') | tojson }}</textarea>
-          </div>
-          {% endif %}
           <div class="field field-wide">
             <label for="decotvSourceSelect">选择视频源（来自 DecoTV）</label>
             <p id="decotvSourceStatus" class="muted" aria-live="polite"></p>
@@ -115,6 +115,17 @@
           </div>
         </div>
 
+        <div class="actions">
+          <button id="saveConfigButton" type="submit" name="action" value="save" disabled>校验并保存</button>
+          <button class="secondary" type="submit" name="action" value="test_connection">测试连接</button>
+          <span class="muted">保存前自动备份最近 10 份；仅保存本页内容。保存后 Telegram 机器人会自动重新加载。</span>
+        </div>
+      </form>
+
+      <form class="tab-panel" id="tab-crawl" role="tabpanel" aria-labelledby="tab-button-crawl" data-section="crawl" method="post" action="{{ url_for('index') }}" hidden>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="crawl">
+
         <h3>抓取与复测参数</h3>
         <div class="form-grid">
           <div class="field">
@@ -150,6 +161,17 @@
             <input id="recheck_max_per_run" name="recheck_max_per_run" type="number" value="{{ config.get('recheck', {}).get('max_per_run', '') }}">
           </div>
         </div>
+
+        <div class="actions">
+          <button type="submit" name="action" value="save">校验并保存</button>
+          <button class="secondary" type="submit" name="action" value="dry_run">Dry Run</button>
+          <span class="muted">仅保存本页内容；Dry Run 不会覆盖现有配置。</span>
+        </div>
+      </form>
+
+      <form class="tab-panel" id="tab-scheduler" role="tabpanel" aria-labelledby="tab-button-scheduler" data-section="scheduler" method="post" action="{{ url_for('index') }}" hidden>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="scheduler">
 
         <h3>定时任务</h3>
         <div class="form-grid">
@@ -226,6 +248,20 @@
           </div>
         </div>
 
+        <div class="actions">
+          <button type="submit" name="action" value="save">校验并保存</button>
+          <button class="secondary" type="submit" name="action" value="run_job_auto">DecoTV抓取</button>
+          <button class="secondary" type="submit" name="action" value="run_job_crawl">视频源抓取</button>
+          <button class="secondary" type="submit" name="action" value="run_job_recheck">线路复测</button>
+          <button class="secondary" type="submit" name="action" value="run_job_stats">统计数量</button>
+          <span class="muted">仅保存本页内容；立即执行不会覆盖现有配置。</span>
+        </div>
+      </form>
+
+      <form class="tab-panel" id="tab-telegram" role="tabpanel" aria-labelledby="tab-button-telegram" data-section="telegram" method="post" action="{{ url_for('index') }}" hidden>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="telegram">
+
         <h3>Telegram</h3>
         <div class="field field-wide muted" aria-label="Telegram 功能说明">
           <strong>Telegram 机器人提供的功能：</strong>
@@ -249,6 +285,24 @@
             <input id="telegram_allowed_chat_ids" name="telegram_allowed_chat_ids" type="text" value="{{ (config.get('telegram', {}).get('allowed_chat_ids', []) or []) | join(', ') }}" placeholder="例如：123456789，多个数字用逗号分隔">
           </div>
         </div>
+
+        <div class="actions">
+          <button type="submit" name="action" value="save">校验并保存</button>
+          <span class="muted">仅保存本页内容。保存后 Telegram 机器人会自动重新加载。</span>
+        </div>
+      </form>
+
+      <form class="tab-panel" id="tab-advanced" role="tabpanel" aria-labelledby="tab-button-advanced" data-section="advanced" method="post" action="{{ url_for('index') }}" hidden>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="advanced">
+
+        {% if config.get('unknown_option') is not none %}
+        <div class="field field-wide">
+          <label>保留字段（未识别配置）</label>
+          <div class="muted">unknown_option</div>
+          <textarea rows="4" readonly>{{ config.get('unknown_option') | tojson }}</textarea>
+        </div>
+        {% endif %}
 
         <h3>抓取源配置</h3>
         <div class="form-grid">
@@ -326,14 +380,8 @@
         </div>
 
         <div class="actions">
-          <button id="saveConfigButton" type="submit" name="action" value="save" disabled>校验并保存</button>
-          <button class="secondary" type="submit" name="action" value="test_connection">测试连接</button>
-          <button class="secondary" type="submit" name="action" value="dry_run">Dry Run</button>
-          <button class="secondary" type="submit" name="action" value="run_job_auto">DecoTV抓取</button>
-          <button class="secondary" type="submit" name="action" value="run_job_crawl">视频源抓取</button>
-          <button class="secondary" type="submit" name="action" value="run_job_recheck">线路复测</button>
-          <button class="secondary" type="submit" name="action" value="run_job_stats">统计数量</button>
-          <span class="muted">保存前自动备份最近 10 份；测试连接、Dry Run 和立即执行都不会覆盖现有配置。</span>
+          <button type="submit" name="action" value="save">校验并保存</button>
+          <span class="muted">仅保存本页内容。</span>
         </div>
       </form>
       
@@ -574,6 +622,55 @@
       window.addEventListener("strm-language-change", function () {
         renderDecoTVSources(sourceSelect.value);
         loadDecoTVSources();
+      });
+    })();
+  </script>
+  <script>
+    (function () {
+      const buttons = Array.from(document.querySelectorAll(".tab-button"));
+      const panels = Array.from(document.querySelectorAll(".tab-panel"));
+      if (!buttons.length) return;
+      let submitting = false;
+
+      function activate(name) {
+        if (!panels.some((panel) => panel.dataset.section === name)) name = "connection";
+        buttons.forEach((button) => {
+          button.setAttribute("aria-selected", String(button.dataset.tab === name));
+        });
+        panels.forEach((panel) => {
+          panel.hidden = panel.dataset.section !== name;
+        });
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", function () {
+          activate(button.dataset.tab);
+          history.replaceState(null, "", "#tab-" + button.dataset.tab);
+        });
+      });
+
+      panels.forEach((panel) => {
+        const dot = document.querySelector("#tab-button-" + panel.dataset.section + " .dirty-dot");
+        const markDirty = function () {
+          panel.dataset.dirty = "1";
+          if (dot) dot.hidden = false;
+        };
+        panel.addEventListener("input", markDirty);
+        panel.addEventListener("change", markDirty);
+        panel.addEventListener("submit", function () {
+          submitting = true;
+        });
+      });
+
+      window.addEventListener("beforeunload", function (event) {
+        if (submitting || !panels.some((panel) => panel.dataset.dirty === "1")) return;
+        event.preventDefault();
+        event.returnValue = "";
+      });
+
+      activate(window.location.hash.replace(/^#tab-/, "") || "connection");
+      window.addEventListener("hashchange", function () {
+        activate(window.location.hash.replace(/^#tab-/, ""));
       });
     })();
   </script>

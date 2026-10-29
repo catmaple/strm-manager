@@ -664,6 +664,93 @@ class ConfigWebTests(unittest.TestCase):
             original_signature,
         )
 
+    def post_section(self, section, **fields):
+        self.authenticate()
+        response = self.client.post(
+            "/", data={"csrf_token": "test-csrf", "section": section, **fields}
+        )
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        return response, saved
+
+    def test_telegram_tab_saves_only_telegram_settings(self):
+        response, saved = self.post_section(
+            "telegram", telegram_token="", telegram_allowed_chat_ids="789"
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.headers["Location"].endswith("#tab-telegram"))
+        self.assertEqual(saved["telegram"], {"token": "telegram-secret", "allowed_chat_ids": [789]})
+        for key in ("decotv", "jellyfin", "cms_apis", "unknown_option"):
+            self.assertEqual(saved[key], self.initial[key])
+        self.assertNotIn("scheduler", saved)
+        self.assertNotIn("recheck", saved)
+
+    def test_scheduler_tab_does_not_touch_other_settings(self):
+        _response, saved = self.post_section(
+            "scheduler",
+            scheduler_enabled="on",
+            scheduler_crawl_hour="3",
+            scheduler_crawl_minute="10",
+        )
+        self.assertTrue(saved["scheduler"]["enabled"])
+        self.assertFalse(saved["scheduler"]["notifications_enabled"])
+        self.assertEqual(saved["scheduler"]["crawl"]["hour"], 3)
+        self.assertEqual(saved["telegram"], self.initial["telegram"])
+        self.assertEqual(saved["jellyfin"], self.initial["jellyfin"])
+
+    def test_crawl_tab_saves_numbers_and_recheck_only(self):
+        _response, saved = self.post_section(
+            "crawl", max_new_per_run="12", recheck_interval_days="5"
+        )
+        self.assertEqual(saved["max_new_per_run"], 12)
+        self.assertEqual(saved["recheck"]["interval_days"], 5)
+        self.assertEqual(saved["decotv"], self.initial["decotv"])
+        self.assertNotIn("crawl", saved)
+
+    def test_advanced_tab_keeps_crawl_sources(self):
+        sources = [{"name": "Source", "api": "https://example.invalid/api", "types": {"1": "movie"}}]
+        self.config_path.write_text(
+            json.dumps({**self.initial, "crawl": {"sources": sources}}), encoding="utf-8"
+        )
+        _response, saved = self.post_section(
+            "advanced", crawl_min_score="7", crawl_skip_remarks=["TC"]
+        )
+        self.assertEqual(saved["crawl"]["sources"], sources)
+        self.assertEqual(saved["crawl"]["min_score"], 7)
+        self.assertEqual(saved["crawl"]["skip_remarks"], ["TC"])
+        self.assertFalse(saved["crawl"]["skip_unknown_year"])
+        self.assertEqual(saved["telegram"], self.initial["telegram"])
+
+    def test_connection_tab_keeps_other_crawl_settings(self):
+        self.config_path.write_text(
+            json.dumps({**self.initial, "crawl": {"min_score": 8}}), encoding="utf-8"
+        )
+        _response, saved = self.post_section(
+            "connection",
+            decotv_url="http://decotv:3000",
+            decotv_admin_username="deco-admin",
+            decotv_admin_password="",
+            jellyfin_url="http://jellyfin:8096",
+        )
+        self.assertEqual(saved["decotv"]["admin_username"], "deco-admin")
+        self.assertEqual(saved["decotv"]["admin_password"], "decotv-admin-secret")
+        self.assertEqual(saved["crawl"]["min_score"], 8)
+        self.assertEqual(saved["telegram"], self.initial["telegram"])
+
+    def test_invalid_tab_input_does_not_block_other_tabs(self):
+        response, saved = self.post_section("telegram", telegram_allowed_chat_ids="abc")
+        self.assertEqual(saved["telegram"], self.initial["telegram"])
+        self.authenticate()
+        page = self.client.get("/").get_data(as_text=True)
+        self.assertIn("请输入数字", page)
+
+    def test_dashboard_renders_five_independent_tab_forms(self):
+        self.authenticate()
+        body = self.client.get("/").get_data(as_text=True)
+        for section in ("connection", "crawl", "scheduler", "telegram", "advanced"):
+            self.assertIn(f'<input type="hidden" name="section" value="{section}">', body)
+            self.assertIn(f'id="tab-button-{section}"', body)
+        self.assertEqual(body.count('class="tab-panel"'), 5)
+
     def test_scheduler_form_parses_schedule_settings(self):
         parsed = manager.config_from_form({
             "scheduler_enabled": "on",

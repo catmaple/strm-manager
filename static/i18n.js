@@ -161,7 +161,20 @@
     "未从 CMS 接口查询到有效分类，请检查 cms_apis 或接口返回格式。": "No valid categories were found. Check cms_apis and the API response format.",
     "已生成 ": "Generated ",
     " 个源分类。": " source categories.",
-    "移除": "Remove"
+    "移除": "Remove",
+    "配置分组": "Configuration groups",
+    "连接与视频源": "Connections & Sources",
+    "抓取与复测": "Crawl & Recheck",
+    "高级过滤": "Advanced Filters",
+    "有未保存的修改": "Unsaved changes",
+    "保存前自动备份最近 10 份；仅保存本页内容。保存后 Telegram 机器人会自动重新加载。": "The latest 10 backups are kept before saving. Only this tab is saved. The Telegram bot reloads automatically after saving.",
+    "仅保存本页内容；Dry Run 不会覆盖现有配置。": "Only this tab is saved. Dry Run does not overwrite the existing configuration.",
+    "仅保存本页内容；立即执行不会覆盖现有配置。": "Only this tab is saved. Running a task now does not overwrite the existing configuration.",
+    "仅保存本页内容。保存后 Telegram 机器人会自动重新加载。": "Only this tab is saved. The Telegram bot reloads automatically after saving.",
+    "仅保存本页内容。": "Only this tab is saved.",
+    "已保存：": "Saved: ",
+    "定时任务和脚本下次运行时会读取新配置。": "Scheduled tasks and scripts will use it on their next run.",
+    "Telegram 机器人将自动重新加载。": "The Telegram bot will reload automatically."
   };
   const originalText = new WeakMap();
 
@@ -198,6 +211,11 @@
     }
     if (value.startsWith("已启动任务：")) {
       return value.replace("已启动任务：", "Task started: ");
+    }
+    const saved = value.match(/^已保存：(.+?)。(.*)$/);
+    if (saved) {
+      const rest = saved[2] ? " " + translateText(saved[2]) : "";
+      return "Saved: " + translateText(saved[1]) + "." + rest;
     }
     return value;
   }
