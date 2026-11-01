@@ -65,7 +65,7 @@
       </div>
       {% endif %}
       <div class="tabs" role="tablist" aria-label="配置分组">
-        {% for tab_id, tab_label in [('connection', '连接与视频源'), ('crawl', '抓取与复测'), ('scheduler', '定时任务'), ('telegram', 'Telegram'), ('advanced', '高级过滤')] %}
+        {% for tab_id, tab_label in [('connection', '帐号与服务'), ('crawl', '视频源'), ('scheduler', '定时任务'), ('telegram', 'Telegram'), ('advanced', '高级过滤')] %}
         <button type="button" class="tab-button" role="tab" id="tab-button-{{ tab_id }}" data-tab="{{ tab_id }}" aria-controls="tab-{{ tab_id }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ tab_label }}<span class="dirty-dot" hidden title="有未保存的修改">●</span></button>
         {% endfor %}
       </div>
@@ -74,19 +74,7 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="section" value="connection">
 
-        <h3>基础配置</h3>
-        <div class="form-grid">
-          <div class="field field-wide">
-            <label for="decotvSourceSelect">选择视频源（来自 DecoTV）</label>
-            <p id="decotvSourceStatus" class="muted" aria-live="polite"></p>
-            <p id="sourceConfigWarning" class="notice error" role="alert" hidden></p>
-            <select id="decotvSourceSelect" disabled>
-              <option value="">正在从 DecoTV 同步视频源…</option>
-            </select>
-            <input id="cms_apis" name="cms_apis" type="hidden" value="{{ (config.get('cms_apis') or []) | tojson | forceescape }}">
-            <div id="cmsPreview" class="preview-box" aria-live="polite">等待生成预览…</div>
-          </div>
-        </div>
+        <h3>帐号与服务</h3>
 
         <h3>DecoTV 管理员账号与服务地址</h3>
         <div class="form-grid">
@@ -116,7 +104,7 @@
         </div>
 
         <div class="actions">
-          <button id="saveConfigButton" type="submit" name="action" value="save" disabled>校验并保存</button>
+          <button type="submit" name="action" value="save">校验并保存</button>
           <button class="secondary" type="submit" name="action" value="test_connection">测试连接</button>
           <span class="muted">保存前自动备份最近 10 份；仅保存本页内容。保存后 Telegram 机器人会自动重新加载。</span>
         </div>
@@ -126,7 +114,25 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="section" value="crawl">
 
-        <h3>抓取与复测参数</h3>
+        <h3>视频源与抓取复测参数</h3>
+        <div class="field field-wide">
+          <label for="decotvSourceSelect">选择视频源（来自 DecoTV）</label>
+          <p class="muted">请先在“帐号与服务”标签中填写并保存 DecoTV 管理员账号，再到本标签同步视频源。</p>
+          <label class="checkbox-inline" for="crawl_auto_select_source">
+            <input id="crawl_auto_select_source" name="crawl_auto_select_source" type="checkbox" {% if config.get('crawl', {}).get('auto_select_source', False) %}checked{% endif %}>
+            自动选择可用视频源（一个失效时自动切换到其它可用源）
+          </label>
+          <p class="muted">关闭自动选择后，必须手动选择 1 个视频源并保存。</p>
+          <p id="decotvSourceStatus" class="muted" aria-live="polite"></p>
+          <p id="sourceConfigWarning" class="notice error" role="alert" hidden></p>
+          <select id="decotvSourceSelect" disabled>
+            <option value="">正在从 DecoTV 同步视频源…</option>
+          </select>
+          <input id="cms_apis" name="cms_apis" type="hidden" value="{{ (config.get('cms_apis') or []) | tojson | forceescape }}">
+          <input id="crawl_sources" name="crawl_sources" type="hidden" value="{{ (config.get('crawl', {}).get('sources') or []) | tojson | forceescape }}">
+          <div id="cmsPreview" class="preview-box" aria-live="polite">等待生成预览…</div>
+        </div>
+
         <div class="form-grid">
           <div class="field">
             <label for="max_new_per_run">榜单抓取每次新增上限</label>
@@ -163,7 +169,7 @@
         </div>
 
         <div class="actions">
-          <button type="submit" name="action" value="save">校验并保存</button>
+          <button id="saveConfigButton" type="submit" name="action" value="save">校验并保存</button>
           <button class="secondary" type="submit" name="action" value="dry_run">Dry Run</button>
           <span class="muted">仅保存本页内容；Dry Run 不会覆盖现有配置。</span>
         </div>
@@ -333,7 +339,6 @@
             <label for="crawl_min_year">最低作品年份</label>
             <input id="crawl_min_year" name="crawl_min_year" type="number" value="{{ config.get('crawl', {}).get('min_year', '') }}">
           </div>
-          <input id="crawl_sources" name="crawl_sources" type="hidden" value="{{ (config.get('crawl', {}).get('sources') or []) | tojson | forceescape }}">
           <div class="field field-wide">
             <label>忽略以下类型</label>
             <div class="checkbox-options">
@@ -409,10 +414,15 @@
       const sourceStatus = document.getElementById("decotvSourceStatus");
       const sourceWarning = document.getElementById("sourceConfigWarning");
       const saveButton = document.getElementById("saveConfigButton");
+      const autoSelectToggle = document.getElementById("crawl_auto_select_source");
+      const crawlForm = document.getElementById("tab-crawl");
       const formatBtn = document.getElementById("format-json");
       const csrfToken = "{{ csrf_token() }}";
+      const hasDecotvAdmin = {{ 'true' if config.get('decotv', {}).get('admin_username') and config.get('decotv', {}).get('admin_password') else 'false' }};
       let previewRequest = 0;
       let currentDecoTVSources = [];
+      let previewPending = false;
+      let sourcesLoading = false;
 
       function parseCmsApis() {
         const raw = (textarea.value || "").trim();
@@ -457,7 +467,71 @@
         sourceSelect.value = currentDecoTVSources.some((source) => source.api === selectedApi)
           ? selectedApi
           : "";
+      }
+
+      function isAutoSelectEnabled() {
+        return !!(autoSelectToggle && autoSelectToggle.checked);
+      }
+
+      function setManualSelectionInvalidState(invalid, message) {
+        if (!sourceSelect) return;
+        sourceSelect.classList.toggle("field-invalid", invalid);
+        sourceSelect.setAttribute("aria-invalid", invalid ? "true" : "false");
+        if (!sourceWarning) return;
+        if (invalid) {
+          sourceWarning.textContent = window.strmTranslate(message || "自动选择已关闭：请手动选择一个视频源并保存。");
+          sourceWarning.hidden = false;
+          return;
+        }
+        sourceWarning.hidden = true;
+      }
+
+      function validateManualSelection() {
+        if (isAutoSelectEnabled()) {
+          setManualSelectionInvalidState(false);
+          return true;
+        }
+        const selectedApi = sourceSelect && sourceSelect.value ? sourceSelect.value.trim() : "";
+        const valid = !!selectedApi;
+        setManualSelectionInvalidState(!valid, "自动选择已关闭：请手动选择一个视频源并保存。");
+        return valid;
+      }
+
+      function hasManualSelection() {
+        return !!(sourceSelect && sourceSelect.value && sourceSelect.value.trim());
+      }
+
+      function refreshSaveButtonState() {
+        if (!saveButton) return;
+        if (previewPending || sourcesLoading) {
+          saveButton.disabled = true;
+          return;
+        }
+        if (isAutoSelectEnabled()) {
+          saveButton.disabled = false;
+          return;
+        }
+        saveButton.disabled = !hasManualSelection();
+      }
+
+      function syncCmsApisFromSelection() {
+        if (!sourcesField) return;
+        if (isAutoSelectEnabled()) {
+          writeCmsApis(currentDecoTVSources.map((source) => source.api));
+          sourceSelect.disabled = true;
+          if (sourceStatus && currentDecoTVSources.length) {
+            sourceStatus.textContent = window.strmTranslate(
+              "自动选择已启用：将按可用性自动使用视频源。"
+            );
+          }
+          refreshSaveButtonState();
+          return;
+        }
         sourceSelect.disabled = !currentDecoTVSources.length;
+        const selectedApi = sourceSelect.value;
+        writeCmsApis(selectedApi ? [selectedApi] : []);
+        validateManualSelection();
+        refreshSaveButtonState();
       }
 
       function updatePreview(message, sources) {
@@ -486,10 +560,12 @@
         if (sourcesField) sourcesField.value = "[]";
         if (!values.length) {
           updatePreview("未配置 CMS API，预览为空。", []);
-          if (saveButton) saveButton.disabled = false;
+          previewPending = false;
+          refreshSaveButtonState();
           return Promise.resolve();
         }
-        if (saveButton) saveButton.disabled = true;
+        previewPending = true;
+        refreshSaveButtonState();
         previewBox.textContent = window.strmTranslate("正在生成预览…");
         const form = new URLSearchParams();
         form.append("csrf_token", csrfToken);
@@ -515,7 +591,10 @@
             updatePreview("生成预览失败，请稍后再试。", []);
           })
           .finally(() => {
-            if (requestId === previewRequest && saveButton) saveButton.disabled = false;
+            if (requestId === previewRequest) {
+              previewPending = false;
+              refreshSaveButtonState();
+            }
           });
       }
 
@@ -537,7 +616,14 @@
 
       function loadDecoTVSources() {
         if (!sourceSelect) return;
-        if (saveButton) saveButton.disabled = true;
+        if (!hasDecotvAdmin) {
+          showSourceLoadFailure("请先在“帐号与服务”标签中填写并保存 DecoTV 管理员账号，再到本标签同步视频源。");
+          sourcesLoading = false;
+          refreshSaveButtonState();
+          return;
+        }
+        sourcesLoading = true;
+        refreshSaveButtonState();
         if (sourceWarning) sourceWarning.hidden = true;
         if (sourceStatus) {
           sourceStatus.textContent = window.strmTranslate("正在从 DecoTV 同步视频源…");
@@ -567,13 +653,14 @@
               showSourceLoadFailure(data.message || "无法读取 DecoTV 视频源，请检查 DecoTV 地址和服务状态。");
               return;
             }
-            const previouslySelected = parseCmsApis()[0];
+            const selectedApis = parseCmsApis();
+            const previouslySelected = selectedApis.find((api) => currentDecoTVSources.some((source) => source.api === api)) || "";
             currentDecoTVSources = data.sources || [];
             const selectedApi = currentDecoTVSources.some((source) => source.api === previouslySelected)
               ? previouslySelected
               : (currentDecoTVSources[0] || {}).api || "";
             renderDecoTVSources(selectedApi);
-            writeCmsApis(selectedApi ? [selectedApi] : []);
+            syncCmsApisFromSelection();
             if (!currentDecoTVSources.length) {
               showSourceLoadFailure(
                 data.message || "DecoTV 中没有可用的已启用非成人视频源。请检查来源是否已启用且 API 地址有效；禁用源和成人源不会显示。"
@@ -591,13 +678,13 @@
           })
           .finally(() => {
             window.clearTimeout(timeoutId);
-            if (saveButton) saveButton.disabled = false;
+            sourcesLoading = false;
+            refreshSaveButtonState();
           });
       }
 
       sourceSelect.addEventListener("change", function () {
-        const selectedApi = sourceSelect.value;
-        writeCmsApis(selectedApi ? [selectedApi] : []);
+        syncCmsApisFromSelection();
         if (sourceStatus) {
           sourceStatus.textContent = window.strmTranslate(
             "所选视频源尚未保存，请点击校验并保存。"
@@ -605,6 +692,29 @@
         }
         triggerPreview();
       });
+
+      if (autoSelectToggle) {
+        autoSelectToggle.addEventListener("change", function () {
+          syncCmsApisFromSelection();
+          if (sourceStatus) {
+            sourceStatus.textContent = window.strmTranslate(
+              autoSelectToggle.checked
+                ? "自动选择已启用：将按可用性自动使用视频源。"
+                : "自动选择已关闭：请手动选择一个视频源并保存。"
+            );
+          }
+          triggerPreview();
+        });
+      }
+
+      if (crawlForm) {
+        crawlForm.addEventListener("submit", function (event) {
+          if (!validateManualSelection()) {
+            event.preventDefault();
+            sourceSelect.focus();
+          }
+        });
+      }
 
       if (formatBtn) {
         formatBtn.addEventListener("click", function () {
@@ -619,6 +729,7 @@
       }
 
       loadDecoTVSources();
+      refreshSaveButtonState();
       window.addEventListener("strm-language-change", function () {
         renderDecoTVSources(sourceSelect.value);
         loadDecoTVSources();

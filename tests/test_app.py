@@ -222,7 +222,9 @@ class ConfigWebTests(unittest.TestCase):
         self.assertIn("统计数量", body)
         self.assertEqual(manager.hide_secrets(self.initial)["cookie"], manager.SECRET_MASK)
         self.assertIn("选择视频源（来自 DecoTV）", body)
+        self.assertIn("自动选择可用视频源", body)
         self.assertIn('id="decotvSourceSelect"', body)
+        self.assertIn('id="crawl_auto_select_source"', body)
         self.assertIn('id="sourceConfigWarning"', body)
         self.assertNotIn("sourceDebug", body)
         self.assertNotIn("调试请求信息", body)
@@ -706,6 +708,40 @@ class ConfigWebTests(unittest.TestCase):
         self.assertEqual(saved["decotv"], self.initial["decotv"])
         self.assertNotIn("crawl", saved)
 
+    def test_crawl_tab_requires_manual_selection_when_auto_disabled(self):
+        self.config_path.write_text(
+            json.dumps({**self.initial, "cms_apis": [], "crawl": {"sources": []}}),
+            encoding="utf-8",
+        )
+        response, saved = self.post_section(
+            "crawl",
+            cms_apis="[]",
+            crawl_sources="[]",
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(saved["cms_apis"], [])
+        self.assertEqual(saved["crawl"]["sources"], [])
+        self.authenticate()
+        page = self.client.get("/").get_data(as_text=True)
+        self.assertIn("已关闭自动选择视频源时，必须手动选择 1 个视频源。", page)
+
+    @patch.object(
+        manager,
+        "discover_sources_from_cms_apis",
+        return_value=[{"name": "A", "api": "https://a.example/api", "types": {"1": "movie"}}],
+    )
+    def test_crawl_tab_allows_multiple_sources_when_auto_enabled(self, _mock_discover):
+        response, saved = self.post_section(
+            "crawl",
+            crawl_auto_select_source="on",
+            cms_apis='["https://a.example/api","https://b.example/api"]',
+            crawl_sources='[{"name":"A","api":"https://a.example/api","types":{"1":"movie"}}]',
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.headers["Location"].endswith("#tab-crawl"))
+        self.assertEqual(saved["cms_apis"], ["https://a.example/api", "https://b.example/api"])
+        self.assertTrue(saved["crawl"]["auto_select_source"])
+
     def test_advanced_tab_keeps_crawl_sources(self):
         sources = [{"name": "Source", "api": "https://example.invalid/api", "types": {"1": "movie"}}]
         self.config_path.write_text(
@@ -773,6 +809,10 @@ class ConfigWebTests(unittest.TestCase):
         self.assertEqual(parsed["scheduler"]["crawl"]["hour"], 2)
         self.assertEqual(parsed["scheduler"]["crawl"]["minute"], 15)
         self.assertEqual(parsed["scheduler"]["stats"]["weekday"], 6)
+
+    def test_config_from_form_parses_crawl_auto_select_source(self):
+        parsed = manager.config_from_form({"crawl_auto_select_source": "on"})
+        self.assertTrue(parsed["crawl"]["auto_select_source"])
 
     @patch.object(manager, "run_manual_job", return_value="已启动任务：指定源抓取")
     def test_run_manual_job_action(self, mock_run_manual_job):

@@ -213,6 +213,8 @@ Do not expose the management console, DecoTV, or Jellyfin administration directl
 
 ### Configuration and operations
 
+The console is split into five tabs (Accounts & Services, Sources, Scheduled Tasks, Telegram, and Advanced Filters), and each tab saves independently. Save DecoTV administrator credentials in Accounts & Services first, then open Sources to sync source options. The Sources tab also includes an **Automatically select available sources** option: when enabled, STRM Manager can switch to another available source if one fails; when disabled, you must manually select exactly one source and save.
+
 The web form manages the existing `config.json` format. Use Docker service names inside the Compose network, not `127.0.0.1`. The initial configuration uses values such as:
 
 ```json
@@ -227,7 +229,8 @@ The web form manages the existing `config.json` format. Use Docker service names
     "api_key": "JELLYFIN API KEY"
   },
   "crawl": {
-    "sources": []
+    "sources": [],
+    "auto_select_source": false
   }
 }
 ```

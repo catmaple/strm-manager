@@ -64,15 +64,15 @@ CRAWL_SKIP_REMARK_OPTIONS = [
     ("预告", "预告"),
 ]
 CONFIG_SECTIONS = {
-    "connection": "连接与视频源",
-    "crawl": "抓取与复测",
+    "connection": "帐号与服务",
+    "crawl": "视频源",
     "scheduler": "定时任务",
     "telegram": "Telegram",
     "advanced": "高级过滤",
 }
 SECTION_KEYS = {
-    "connection": {"decotv", "jellyfin", "cms_apis", "list_urls"},
-    "crawl": {"max_new_per_run", "max_pages", "max_lookups_per_run", "retry_miss_days", "recheck"},
+    "connection": {"decotv", "jellyfin"},
+    "crawl": {"max_new_per_run", "max_pages", "max_lookups_per_run", "retry_miss_days", "recheck", "cms_apis"},
     "scheduler": {"scheduler"},
     "telegram": {"telegram"},
 }
@@ -195,6 +195,9 @@ def validate_config(config):
             value = crawl.get(key)
             if value is not None and not isinstance(value, bool):
                 raise ValueError(f"crawl.{key} 必须是 true 或 false")
+        auto_select_source = crawl.get("auto_select_source")
+        if auto_select_source is not None and not isinstance(auto_select_source, bool):
+            raise ValueError("crawl.auto_select_source 必须是 true 或 false")
         score_field = crawl.get("score_field")
         if score_field is not None and score_field not in {"douban", "vod", "any"}:
             raise ValueError("crawl.score_field 只能是 douban、vod 或 any")
@@ -639,6 +642,7 @@ def config_from_form(form):
         },
         "crawl": {
             "sources": parse_form_json_list(form.get("crawl_sources", "[]")),
+            "auto_select_source": form.get("crawl_auto_select_source") == "on",
             "max_age_years": parse_form_int(form.get("crawl_max_age_years", ""), 0, 1000),
             "min_year": parse_form_int(form.get("crawl_min_year", ""), 0, 10000),
             "skip_unknown_year": form.get("crawl_skip_unknown_year") == "on",
@@ -913,8 +917,12 @@ def select_section(submitted, form, section):
         crawl = submitted.get("crawl") or {}
         return {"crawl": {key: value for key, value in crawl.items() if key != "sources"}}
     selected = {key: value for key, value in submitted.items() if key in SECTION_KEYS[section]}
-    if section == "connection" and "crawl_sources" in form:
-        selected["crawl"] = {"sources": (submitted.get("crawl") or {}).get("sources", [])}
+    if section == "crawl" and "crawl_sources" in form:
+        crawl_submitted = submitted.get("crawl") or {}
+        selected["crawl"] = {
+            "sources": crawl_submitted.get("sources", []),
+            "auto_select_source": crawl_submitted.get("auto_select_source", False),
+        }
     return selected
 
 
@@ -967,6 +975,16 @@ def index():
                 session["last_action_result"] = message
                 flash(message, "success")
             else:
+                if section == "crawl":
+                    crawl_config = updated.get("crawl") or {}
+                    auto_select_source = bool(crawl_config.get("auto_select_source", False))
+                    source_count = len(updated.get("cms_apis") or [])
+                    if auto_select_source and source_count == 0:
+                        raise ValueError(
+                            "已启用自动选择视频源，但当前没有可用视频源。请先在 DecoTV 中启用视频源后重试。"
+                        )
+                    if not auto_select_source and source_count != 1:
+                        raise ValueError("已关闭自动选择视频源时，必须手动选择 1 个视频源。")
                 cms_apis_changed = updated.get("cms_apis", []) != current.get("cms_apis", [])
                 if cms_apis_changed or (
                     not updated.get("crawl", {}).get("sources")

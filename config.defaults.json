@@ -35,6 +35,7 @@
   },
   "crawl": {
     "sources": [],
+    "auto_select_source": false,
     "max_age_years": 20,
     "min_year": 0,
     "skip_unknown_year": false,
