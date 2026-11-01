@@ -570,6 +570,7 @@
         const form = new URLSearchParams();
         form.append("csrf_token", csrfToken);
         form.append("cms_apis", JSON.stringify(values));
+        if (isAutoSelectEnabled()) form.append("first_only", "1");
         return fetch("{{ url_for('generate_sources_api') }}", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
@@ -654,8 +655,8 @@
               return;
             }
             const selectedApis = parseCmsApis();
-            const previouslySelected = selectedApis.find((api) => currentDecoTVSources.some((source) => source.api === api)) || "";
             currentDecoTVSources = data.sources || [];
+            const previouslySelected = selectedApis.find((api) => currentDecoTVSources.some((source) => source.api === api)) || "";
             const selectedApi = currentDecoTVSources.some((source) => source.api === previouslySelected)
               ? previouslySelected
               : (currentDecoTVSources[0] || {}).api || "";

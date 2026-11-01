@@ -433,9 +433,11 @@ def extract_class_entries(payload):
     return []
 
 
-def discover_sources_from_cms_apis(api_urls):
+def discover_sources_from_cms_apis(api_urls, first_only=False):
     results = []
     for raw in api_urls or []:
+        if first_only and results:
+            break
         url = str(raw or "").strip()
         if not url:
             continue
@@ -899,7 +901,9 @@ def generate_sources_api():
     if not sent or not expected or not hmac.compare_digest(sent, expected):
         return {"error": "CSRF 校验失败，请刷新页面重试。"}, 400
     api_urls = parse_form_json_list(request.form.get("cms_apis", ""))
-    generated = discover_sources_from_cms_apis(api_urls)
+    generated = discover_sources_from_cms_apis(
+        api_urls, first_only=request.form.get("first_only") == "1"
+    )
     return {
         "count": len(generated),
         "message": (
@@ -990,7 +994,10 @@ def index():
                     not updated.get("crawl", {}).get("sources")
                     and updated.get("cms_apis")
                 ):
-                    generated = discover_sources_from_cms_apis(updated.get("cms_apis", []))
+                    generated = discover_sources_from_cms_apis(
+                        updated.get("cms_apis", []),
+                        first_only=bool((updated.get("crawl") or {}).get("auto_select_source")),
+                    )
                     if generated:
                         updated.setdefault("crawl", {})
                         updated["crawl"]["sources"] = generated

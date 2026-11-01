@@ -351,7 +351,7 @@ class ConfigWebTests(unittest.TestCase):
                 "types": {"1": "movie"},
             }],
         )
-        mock_discover.assert_called_once_with(["https://new-source.example/api"])
+        mock_discover.assert_called_once_with(["https://new-source.example/api"], first_only=False)
 
     @patch.object(manager, "discover_sources_from_cms_apis", return_value=[])
     def test_save_changed_cms_api_without_categories_is_rejected(self, _mock_discover):
@@ -476,7 +476,7 @@ class ConfigWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["count"], 1)
         self.assertEqual(response.json["sources"][0]["types"]["1"], "movie")
-        mock_generate.assert_called_once_with(["https://example.com/api.php/provide/vod"])
+        mock_generate.assert_called_once_with(["https://example.com/api.php/provide/vod"], first_only=False)
 
     @patch.object(manager.urllib.request, "urlopen")
     def test_decotv_sources_api_lists_enabled_sources_without_other_config(self, mock_urlopen):
@@ -809,6 +809,32 @@ class ConfigWebTests(unittest.TestCase):
         self.assertEqual(parsed["scheduler"]["crawl"]["hour"], 2)
         self.assertEqual(parsed["scheduler"]["crawl"]["minute"], 15)
         self.assertEqual(parsed["scheduler"]["stats"]["weekday"], 6)
+
+    def test_discover_first_only_stops_after_first_usable_source(self):
+        calls = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, *args):
+                return b'{"class": [{"type_id": 1, "type_name": "movie"}]}'
+
+        def fake_urlopen(request, timeout=0):
+            calls.append(request.full_url)
+            return FakeResponse()
+
+        with patch.object(manager.urllib.request, "urlopen", fake_urlopen), patch.object(
+            manager.json, "load", return_value={"class": [{"type_id": 1, "type_name": "movie"}]}
+        ):
+            result = manager.discover_sources_from_cms_apis(
+                ["https://a.example/api", "https://b.example/api"], first_only=True
+            )
+        self.assertEqual([item["api"] for item in result], ["https://a.example/api"])
+        self.assertTrue(all("a.example" in url for url in calls))
 
     def test_config_from_form_parses_crawl_auto_select_source(self):
         parsed = manager.config_from_form({"crawl_auto_select_source": "on"})
